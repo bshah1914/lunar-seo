@@ -1,0 +1,359 @@
+import React, { useState, useMemo, useEffect } from "react";
+import {
+  Link2,
+  Globe,
+  Shield,
+  AlertTriangle,
+  Search,
+  ExternalLink,
+  ArrowUpRight,
+  ArrowDownRight,
+  ChevronLeft,
+  ChevronRight,
+  TrendingDown,
+  BarChart3,
+  RefreshCw,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+
+const API = '/api/v1';
+const getHeaders = () => ({
+  'Authorization': `Bearer ${localStorage.getItem('token')}`,
+  'Content-Type': 'application/json',
+});
+
+// ---------------------------------------------------------------------------
+// Helper Components
+// ---------------------------------------------------------------------------
+
+function PageHeader({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between mb-8">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">{title}</h1>
+      </div>
+      {children && <div className="flex items-center gap-3">{children}</div>}
+    </div>
+  );
+}
+
+function StatsCard({ title, value, icon: Icon, trend, trendDirection }: {
+  title: string;
+  value: string | number;
+  icon: React.ElementType;
+  trend?: string;
+  trendDirection?: "up" | "down";
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{title}</span>
+        <Icon className="h-5 w-5 text-gray-400" />
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="text-2xl font-bold text-gray-900 dark:text-white">{value}</span>
+        {trend && (
+          <span className={`inline-flex items-center text-xs font-medium ${trendDirection === "up" ? "text-green-600" : "text-red-500"}`}>
+            {trendDirection === "up" ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
+            {trend}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Badge({ children, variant = "default" }: { children: React.ReactNode; variant?: "default" | "success" | "destructive" | "warning" | "secondary" | "outline" }) {
+  const colors: Record<string, string> = {
+    default: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+    success: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+    destructive: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+    warning: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
+    secondary: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+    outline: "border border-gray-300 text-gray-700 dark:border-gray-600 dark:text-gray-300",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[variant]}`}>
+      {children}
+    </span>
+  );
+}
+
+function getDaBadgeVariant(da: number): "success" | "secondary" | "warning" | "destructive" | "default" {
+  if (da >= 80) return "success";
+  if (da >= 60) return "secondary";
+  if (da >= 40) return "warning";
+  return "default";
+}
+
+const ITEMS_PER_PAGE = 6;
+const DA_BAR_COLORS = ["#94a3b8", "#60a5fa", "#34d399", "#fbbf24", "#f97316"];
+
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
+
+export default function Backlinks() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "lost" | "broken">("all");
+  const [relFilter, setRelFilter] = useState<"all" | "follow" | "nofollow">("all");
+  const [minDa, setMinDa] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState<string>('');
+  const [backlinksData, setBacklinksData] = useState<any[]>([]);
+  const [profile, setProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/clients/`, { headers: getHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        const clientList = d.clients || d || [];
+        const list = Array.isArray(clientList) ? clientList : [];
+        setClients(list);
+        if (list.length > 0) setSelectedClient(list[0].id);
+      })
+      .catch(() => setClients([]));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    setLoading(true);
+    Promise.all([
+      fetch(`${API}/backlinks/${selectedClient}/backlinks`, { headers: getHeaders() }).then(r => r.json()).catch(() => []),
+      fetch(`${API}/backlinks/${selectedClient}/backlinks/profile`, { headers: getHeaders() }).then(r => r.json()).catch(() => null),
+    ]).then(([blRes, profileRes]) => {
+      const bls = blRes.backlinks || blRes || [];
+      setBacklinksData(Array.isArray(bls) ? bls : []);
+      setProfile(profileRes);
+    }).finally(() => setLoading(false));
+  }, [selectedClient]);
+
+  const filteredBacklinks = useMemo(() => {
+    return backlinksData.filter((bl: any) => {
+      if (statusFilter !== "all" && bl.status !== statusFilter) return false;
+      if (relFilter !== "all" && bl.relType !== relFilter) return false;
+      if ((bl.domainAuthority || bl.domain_authority || 0) < minDa) return false;
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        return (
+          (bl.sourceUrl || bl.source_url || "").toLowerCase().includes(q) ||
+          (bl.targetUrl || bl.target_url || "").toLowerCase().includes(q) ||
+          (bl.anchorText || bl.anchor_text || "").toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [searchQuery, statusFilter, relFilter, minDa, backlinksData]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBacklinks.length / ITEMS_PER_PAGE));
+  const paginatedBacklinks = filteredBacklinks.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, relFilter, minDa]);
+
+  if (clients.length === 0 && !loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 lg:p-8">
+        <PageHeader title="Backlink Intelligence" />
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Link2 className="h-12 w-12 text-gray-300 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white">Select a client first</h3>
+          <p className="mt-1 text-sm text-gray-500">Add a client to start analyzing backlinks.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 lg:p-8">
+      {/* Header */}
+      <PageHeader title="Backlink Intelligence">
+        {clients.length > 0 && (
+          <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+        <button className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow hover:bg-indigo-700 transition-colors">
+          <Search className="h-4 w-4" />
+          Analyze Domain
+        </button>
+      </PageHeader>
+
+      {loading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+        </div>
+      )}
+
+      {!loading && backlinksData.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Link2 className="h-12 w-12 text-gray-300 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white">No backlinks found</h3>
+          <p className="mt-1 text-sm text-gray-500">Backlink data will appear here once available.</p>
+        </div>
+      )}
+
+      {!loading && backlinksData.length > 0 && (
+        <>
+          {/* Stats Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <StatsCard title="Total Backlinks" value={profile?.total_backlinks || backlinksData.length} icon={Link2} />
+            <StatsCard title="Referring Domains" value={profile?.referring_domains || 0} icon={Globe} />
+            <StatsCard title="Avg Domain Authority" value={profile?.avg_domain_authority || 0} icon={Shield} />
+            <StatsCard title="Spam Score" value={`${profile?.spam_score || 0}%`} icon={AlertTriangle} />
+          </div>
+
+          {/* Backlinks Table */}
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm mb-8">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Link2 className="h-5 w-5" />
+                  Backlinks ({filteredBacklinks.length})
+                </h2>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search URL or anchor text..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9 pr-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none w-64"
+                    />
+                  </div>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as any)}
+                    className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="lost">Lost</option>
+                    <option value="broken">Broken</option>
+                  </select>
+                  <select
+                    value={relFilter}
+                    onChange={(e) => setRelFilter(e.target.value as any)}
+                    className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="all">All Rel Types</option>
+                    <option value="follow">Follow</option>
+                    <option value="nofollow">Nofollow</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                    <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Source URL</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Target URL</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Anchor Text</th>
+                    <th className="text-center px-4 py-3 font-medium text-gray-500 dark:text-gray-400">DA</th>
+                    <th className="text-center px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
+                    <th className="text-center px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Rel</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedBacklinks.map((bl: any, idx: number) => {
+                    const da = bl.domainAuthority || bl.domain_authority || 0;
+                    return (
+                      <tr key={bl.id || idx} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
+                        <td className="px-4 py-3">
+                          <span className="text-indigo-600 dark:text-indigo-400 max-w-[200px] truncate block">
+                            {(bl.sourceUrl || bl.source_url || "").replace("https://", "")}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[120px] truncate">{bl.targetUrl || bl.target_url}</td>
+                        <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[150px] truncate">{bl.anchorText || bl.anchor_text}</td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant={getDaBadgeVariant(da)}>{da}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant={bl.status === "active" ? "success" : bl.status === "lost" ? "destructive" : "warning"}>
+                            {bl.status}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant={(bl.relType || bl.rel_type) === "follow" ? "secondary" : "outline"}>
+                            {bl.relType || bl.rel_type}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {paginatedBacklinks.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center text-gray-400">
+                        No backlinks match the current filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                Showing {Math.min((currentPage - 1) * ITEMS_PER_PAGE + 1, filteredBacklinks.length)}-{Math.min(currentPage * ITEMS_PER_PAGE, filteredBacklinks.length)} of {filteredBacklinks.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                      page === currentPage
+                        ? "bg-indigo-600 text-white"
+                        : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
