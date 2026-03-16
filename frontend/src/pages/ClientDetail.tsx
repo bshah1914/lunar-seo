@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   LineChart,
   Line,
@@ -23,6 +23,10 @@ import {
   Type,
   Crosshair,
   Users,
+  AlertTriangle,
+  FileText,
+  Rocket,
+  Search,
 } from 'lucide-react'
 
 const API = '/api/v1';
@@ -31,8 +35,28 @@ const getHeaders = () => ({
   'Content-Type': 'application/json',
 });
 
+async function apiFetch(url: string) {
+  const r = await fetch(url, { headers: getHeaders() });
+  if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+  if (!r.ok) throw new Error(`Error: ${r.status}`);
+  return r.json();
+}
+
 const tabs = ['Overview', 'SEO', 'Keywords', 'Backlinks', 'Content', 'Campaigns', 'Reports'] as const
 type Tab = (typeof tabs)[number]
+
+function statusStyles(status: string) {
+  switch (status) {
+    case 'active':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+    case 'paused':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+    case 'archived':
+      return 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+    default:
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Client Detail Page
@@ -40,22 +64,177 @@ type Tab = (typeof tabs)[number]
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('Overview')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [clientData, setClientData] = useState<any>(null)
   const [dashboard, setDashboard] = useState<any>(null)
+
+  // Tab data states
+  const [seoData, setSeoData] = useState<{ audits: any[]; metrics: any[] } | null>(null)
+  const [keywordsData, setKeywordsData] = useState<any[] | null>(null)
+  const [backlinksData, setBacklinksData] = useState<any[] | null>(null)
+  const [contentData, setContentData] = useState<any[] | null>(null)
+  const [campaignsData, setCampaignsData] = useState<any[] | null>(null)
+  const [reportsData, setReportsData] = useState<any[] | null>(null)
+  const [tabLoading, setTabLoading] = useState(false)
+  const [tabError, setTabError] = useState<string | null>(null)
+
+  // Edit dialog state
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [editData, setEditData] = useState({ name: '', domain: '', industry: 'Technology', marketing_goals: '' })
+  const [editError, setEditError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  // Audit state
+  const [auditMessage, setAuditMessage] = useState<string | null>(null)
+
+  const industries = ['Technology', 'E-commerce', 'Healthcare', 'Finance', 'Sustainability', 'SaaS']
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    setError(null);
     Promise.all([
-      fetch(`${API}/clients/${id}`, { headers: getHeaders() }).then(r => r.json()).catch(() => null),
-      fetch(`${API}/clients/${id}/dashboard`, { headers: getHeaders() }).then(r => r.json()).catch(() => null),
+      apiFetch(`${API}/clients/${id}`),
+      apiFetch(`${API}/clients/${id}/dashboard`),
     ]).then(([clientRes, dashboardRes]) => {
       setClientData(clientRes);
       setDashboard(dashboardRes);
+    }).catch((err) => {
+      setError(err.message || 'Failed to load client data.')
     }).finally(() => setLoading(false));
   }, [id]);
+
+  // Fetch tab data when tab changes
+  useEffect(() => {
+    if (!id || activeTab === 'Overview') return;
+
+    const fetchTabData = async () => {
+      setTabLoading(true);
+      setTabError(null);
+      try {
+        switch (activeTab) {
+          case 'SEO': {
+            if (seoData) { setTabLoading(false); return; }
+            const [audits, metrics] = await Promise.all([
+              apiFetch(`${API}/seo/${id}/audits`).catch(() => []),
+              apiFetch(`${API}/seo/${id}/metrics`).catch(() => []),
+            ]);
+            setSeoData({ audits: audits?.audits || audits || [], metrics: metrics?.metrics || metrics || [] });
+            break;
+          }
+          case 'Keywords': {
+            if (keywordsData) { setTabLoading(false); return; }
+            const kw = await apiFetch(`${API}/keywords/${id}/keywords`).catch(() => []);
+            setKeywordsData(kw?.keywords || kw || []);
+            break;
+          }
+          case 'Backlinks': {
+            if (backlinksData) { setTabLoading(false); return; }
+            const bl = await apiFetch(`${API}/backlinks/${id}/backlinks`).catch(() => []);
+            setBacklinksData(bl?.backlinks || bl || []);
+            break;
+          }
+          case 'Content': {
+            if (contentData) { setTabLoading(false); return; }
+            const ct = await apiFetch(`${API}/content/${id}/content`).catch(() => []);
+            setContentData(ct?.content || ct || []);
+            break;
+          }
+          case 'Campaigns': {
+            if (campaignsData) { setTabLoading(false); return; }
+            const cp = await apiFetch(`${API}/campaigns/?client_id=${id}`).catch(() => []);
+            setCampaignsData(cp?.campaigns || cp || []);
+            break;
+          }
+          case 'Reports': {
+            if (reportsData) { setTabLoading(false); return; }
+            const rp = await apiFetch(`${API}/reports/${id}/reports`).catch(() => []);
+            setReportsData(rp?.reports || rp || []);
+            break;
+          }
+        }
+      } catch (err: any) {
+        setTabError(err.message || `Failed to load ${activeTab} data.`);
+      } finally {
+        setTabLoading(false);
+      }
+    };
+
+    fetchTabData();
+  }, [id, activeTab]);
+
+  const handleEditClient = async () => {
+    if (!id || !editData.name || !editData.domain) return
+    setSaving(true)
+    setEditError('')
+    try {
+      const res = await fetch(`${API}/clients/${id}`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          name: editData.name,
+          domain: editData.domain,
+          industry: editData.industry,
+          marketing_goals: editData.marketing_goals,
+        }),
+      })
+      if (res.ok) {
+        const updated = await res.json().catch(() => null)
+        if (updated) setClientData(updated)
+        setShowEditDialog(false)
+      } else if (res.status === 401) {
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setEditError(err.detail || `Error: ${res.status}`)
+      }
+    } catch (err: any) {
+      setEditError(err.message || 'Network error.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const openEditDialog = () => {
+    if (!clientData) return
+    setEditData({
+      name: clientData.name || '',
+      domain: clientData.domain || '',
+      industry: clientData.industry || 'Technology',
+      marketing_goals: clientData.marketing_goals || '',
+    })
+    setEditError('')
+    setShowEditDialog(true)
+  }
+
+  const handleRunAudit = async () => {
+    if (!id) return
+    setAuditMessage(null)
+    try {
+      const res = await fetch(`${API}/seo/${id}/audit`, {
+        method: 'POST',
+        headers: getHeaders(),
+      })
+      if (res.status === 401) {
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+        return
+      }
+      if (res.ok) {
+        setAuditMessage('Audit started successfully!')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setAuditMessage(err.detail || `Audit failed: ${res.status}`)
+      }
+    } catch (err: any) {
+      setAuditMessage(err.message || 'Failed to start audit.')
+    }
+    setTimeout(() => setAuditMessage(null), 4000)
+  }
 
   if (loading) {
     return (
@@ -67,10 +246,44 @@ export default function ClientDetail() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          <button
+            onClick={() => navigate('/clients')}
+            className="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Clients
+          </button>
+          <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-16 shadow-sm dark:border-red-800 dark:bg-red-900/20">
+            <AlertTriangle className="mb-4 h-12 w-12 text-red-400" />
+            <h3 className="text-lg font-medium text-red-700 dark:text-red-300">Failed to load client</h3>
+            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!clientData) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          <button
+            onClick={() => navigate('/clients')}
+            className="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Clients
+          </button>
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Users className="h-12 w-12 text-gray-300 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">Client not found</h3>
@@ -92,8 +305,56 @@ export default function ClientDetail() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Audit toast message */}
+        {auditMessage && (
+          <div className="fixed top-4 right-4 z-50 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 shadow-lg dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
+            {auditMessage}
+          </div>
+        )}
+
+        {/* Edit Client Dialog */}
+        {showEditDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+              <h2 className="mb-4 text-xl font-bold text-gray-900 dark:text-white">Edit Client</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Company Name *</label>
+                  <input value={editData.name} onChange={e => setEditData({...editData, name: e.target.value})} placeholder="e.g. Acme Corporation" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Website Domain *</label>
+                  <input value={editData.domain} onChange={e => setEditData({...editData, domain: e.target.value})} placeholder="e.g. acmecorp.com" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Industry</label>
+                  <select value={editData.industry} onChange={e => setEditData({...editData, industry: e.target.value})} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                    {industries.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Marketing Goals</label>
+                  <textarea value={editData.marketing_goals} onChange={e => setEditData({...editData, marketing_goals: e.target.value})} rows={3} placeholder="e.g. Increase organic traffic by 50%" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+              </div>
+              {editError && (
+                <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{editError}</div>
+              )}
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => { setShowEditDialog(false); setEditError(''); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>
+                <button onClick={handleEditClient} disabled={saving || !editData.name || !editData.domain} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Back Button */}
-        <button className="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+        <button
+          onClick={() => navigate('/clients')}
+          className="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+        >
           <ArrowLeft className="h-4 w-4" />
           Back to Clients
         </button>
@@ -110,26 +371,37 @@ export default function ClientDetail() {
                   <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                     {clientData.name}
                   </h1>
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold capitalize text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${statusStyles(clientData.status || 'active')}`}>
                     {clientData.status || 'active'}
                   </span>
                 </div>
                 <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                  <span className="flex items-center gap-1">
+                  <a
+                    href={`https://${clientData.domain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition"
+                  >
                     <Globe className="h-3.5 w-3.5" />
                     {clientData.domain}
                     <ExternalLink className="h-3 w-3" />
-                  </span>
+                  </a>
                   {clientData.industry && <span>{clientData.industry}</span>}
                   {clientData.joinedDate && <span>Client since {clientData.joinedDate}</span>}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">
+              <button
+                onClick={openEditDialog}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
                 Edit Client
               </button>
-              <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">
+              <button
+                onClick={handleRunAudit}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+              >
                 Run Audit
               </button>
             </div>
@@ -382,16 +654,360 @@ export default function ClientDetail() {
           </div>
         )}
 
-        {/* Placeholder for other tabs */}
-        {activeTab !== 'Overview' && (
-          <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-800">
-            <div className="text-center">
-              <BarChart3 className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-              <p className="mt-3 text-lg font-medium text-gray-900 dark:text-white">{activeTab}</p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                This section is under development.
-              </p>
-            </div>
+        {/* SEO Tab */}
+        {activeTab === 'SEO' && (
+          <div className="space-y-6">
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && seoData && (
+              <>
+                {/* Latest Audit Score */}
+                {seoData.audits.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                    <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Latest Audit</h2>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      {seoData.audits.slice(0, 1).map((audit: any, idx: number) => (
+                        <React.Fragment key={idx}>
+                          <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Overall Score</p>
+                            <p className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">{audit.score || audit.seo_score || '--'}</p>
+                          </div>
+                          <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Performance</p>
+                            <p className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">{audit.performance_score || '--'}</p>
+                          </div>
+                          <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Issues Found</p>
+                            <p className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">{audit.issues_count || audit.issues || '--'}</p>
+                          </div>
+                          <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Date</p>
+                            <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{audit.created_at ? new Date(audit.created_at).toLocaleDateString() : audit.date || '--'}</p>
+                          </div>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Metrics Chart */}
+                {seoData.metrics.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                    <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">SEO Metrics Over Time</h2>
+                    <div className="h-72">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={seoData.metrics}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} />
+                          <YAxis stroke="#9ca3af" fontSize={12} />
+                          <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#f9fafb' }} />
+                          <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2.5} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6 }} name="SEO Score" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* Audit History Table */}
+                {seoData.audits.length > 1 && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                    <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Audit History</h2>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 dark:border-gray-700">
+                            <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Date</th>
+                            <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Score</th>
+                            <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Issues</th>
+                            <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                          {seoData.audits.map((audit: any, idx: number) => (
+                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                              <td className="py-2.5 text-gray-900 dark:text-white">{audit.created_at ? new Date(audit.created_at).toLocaleDateString() : audit.date || '--'}</td>
+                              <td className="py-2.5 font-semibold text-gray-900 dark:text-white">{audit.score || audit.seo_score || '--'}</td>
+                              <td className="py-2.5 text-gray-600 dark:text-gray-300">{audit.issues_count || audit.issues || '--'}</td>
+                              <td className="py-2.5"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">{audit.status || 'completed'}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {seoData.audits.length === 0 && seoData.metrics.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <Shield className="h-12 w-12 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">No SEO data yet</h3>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Run an audit to start collecting SEO data.</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Keywords Tab */}
+        {activeTab === 'Keywords' && (
+          <div>
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && keywordsData && (
+              keywordsData.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Tracked Keywords</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Keyword</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Position</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Change</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Volume</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Difficulty</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {keywordsData.map((kw: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                            <td className="py-2.5 font-medium text-gray-900 dark:text-white">{kw.keyword}</td>
+                            <td className="py-2.5">
+                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                #{kw.position || kw.current_position || '--'}
+                              </span>
+                            </td>
+                            <td className="py-2.5">
+                              {(kw.change || 0) > 0 ? (
+                                <span className="flex items-center text-emerald-600"><TrendingUp className="mr-1 h-3 w-3" />+{kw.change}</span>
+                              ) : (kw.change || 0) < 0 ? (
+                                <span className="flex items-center text-rose-600"><TrendingDown className="mr-1 h-3 w-3" />{kw.change}</span>
+                              ) : (
+                                <span className="text-gray-400">--</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 text-gray-600 dark:text-gray-300">{(kw.volume || kw.search_volume || 0).toLocaleString()}</td>
+                            <td className="py-2.5 text-gray-600 dark:text-gray-300">{kw.difficulty || kw.keyword_difficulty || '--'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <Search className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">No keywords tracked yet</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Add keywords to start tracking rankings.</p>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* Backlinks Tab */}
+        {activeTab === 'Backlinks' && (
+          <div>
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && backlinksData && (
+              backlinksData.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Backlinks</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Source URL</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Target URL</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">DA</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Type</th>
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {backlinksData.map((bl: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                            <td className="py-2.5 text-gray-900 dark:text-white max-w-xs truncate">
+                              <a href={bl.source_url || bl.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 dark:hover:text-blue-400">{bl.source_url || bl.sourceUrl || '--'}</a>
+                            </td>
+                            <td className="py-2.5 text-gray-600 dark:text-gray-300 max-w-xs truncate">{bl.target_url || bl.targetUrl || '--'}</td>
+                            <td className="py-2.5 font-semibold text-gray-900 dark:text-white">{bl.domain_authority || bl.da || '--'}</td>
+                            <td className="py-2.5 text-gray-600 dark:text-gray-300">{bl.link_type || bl.type || '--'}</td>
+                            <td className="py-2.5">
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${(bl.status === 'active' || bl.status === 'live') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'}`}>
+                                {bl.status || '--'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <Link2 className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">No backlinks found</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Backlink data will appear here once discovered.</p>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* Content Tab */}
+        {activeTab === 'Content' && (
+          <div>
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && contentData && (
+              contentData.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Content</h2>
+                  <div className="space-y-4">
+                    {contentData.map((item: any, idx: number) => (
+                      <div key={idx} className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <h3 className="font-medium text-gray-900 dark:text-white">{item.title || item.name || 'Untitled'}</h3>
+                            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{item.content_type || item.type || 'Article'} {item.created_at ? ' - ' + new Date(item.created_at).toLocaleDateString() : ''}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${item.status === 'published' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : item.status === 'draft' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'}`}>
+                            {item.status || 'draft'}
+                          </span>
+                        </div>
+                        {item.summary && <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{item.summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <FileText className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">No content yet</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Create content to see it listed here.</p>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* Campaigns Tab */}
+        {activeTab === 'Campaigns' && (
+          <div>
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && campaignsData && (
+              campaignsData.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Campaigns</h2>
+                  <div className="space-y-4">
+                    {campaignsData.map((campaign: any, idx: number) => (
+                      <div key={idx} className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-gray-900 dark:text-white">{campaign.name}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{campaign.campaign_type || campaign.type || '--'}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${campaign.status === 'active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : campaign.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                            {campaign.status || '--'}
+                          </span>
+                        </div>
+                        {(campaign.progress != null) && (
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                              <span>Progress</span>
+                              <span>{campaign.progress}%</span>
+                            </div>
+                            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+                              <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${campaign.progress}%` }} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <Rocket className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">No campaigns yet</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Create a campaign to get started.</p>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* Reports Tab */}
+        {activeTab === 'Reports' && (
+          <div>
+            {tabLoading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+              </div>
+            )}
+            {tabError && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{tabError}</div>
+            )}
+            {!tabLoading && !tabError && reportsData && (
+              reportsData.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Reports</h2>
+                  <div className="space-y-4">
+                    {reportsData.map((report: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+                        <div>
+                          <p className="font-medium text-gray-900 dark:text-white">{report.title || report.name || `Report #${idx + 1}`}</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">{report.report_type || report.type || 'General'} {report.created_at ? ' - ' + new Date(report.created_at).toLocaleDateString() : ''}</p>
+                        </div>
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${report.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                          {report.status || 'pending'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <BarChart3 className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">No reports yet</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Reports will appear here once generated.</p>
+                </div>
+              )
+            )}
           </div>
         )}
       </div>

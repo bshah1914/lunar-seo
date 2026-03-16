@@ -49,25 +49,45 @@ export default function SEOAudit() {
   const [selectedClient, setSelectedClient] = useState<string>('')
   const [auditData, setAuditData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleAuthError = (r: Response) => {
+    if (r.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      return true;
+    }
+    return false;
+  };
 
   useEffect(() => {
     fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((err) => { setClients([]); setError(err.message); });
   }, []);
 
-  useEffect(() => {
-    if (!selectedClient) return;
+  const fetchAudits = (clientId: string) => {
     setLoading(true);
-    fetch(`${API}/seo/${selectedClient}/audits`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError(null);
+    fetch(`${API}/seo/${clientId}/audits`, { headers: getHeaders() })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const audits = d.audits || d || [];
         if (Array.isArray(audits) && audits.length > 0) {
           setAuditData(audits[0]);
@@ -77,9 +97,59 @@ export default function SEOAudit() {
           setAuditData(null);
         }
       })
-      .catch(() => setAuditData(null))
+      .catch((err) => { setAuditData(null); setError(err.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    setAuditData(null);
+    fetchAudits(selectedClient);
   }, [selectedClient]);
+
+  const handleRunAudit = () => {
+    if (!selectedClient) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${API}/seo/${selectedClient}/audit`, {
+      method: 'POST',
+      headers: getHeaders(),
+    })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (!d) return;
+        alert('Audit started successfully!');
+        fetchAudits(selectedClient);
+      })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  };
+
+  const handleAnalyze = () => {
+    if (!selectedClient) return;
+    if (!url.trim()) { setError('Please enter a URL to analyze.'); return; }
+    setLoading(true);
+    setError(null);
+    fetch(`${API}/seo/${selectedClient}/audit`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ url: url.trim() }),
+    })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (!d) return;
+        alert('Audit started successfully!');
+        fetchAudits(selectedClient);
+      })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  };
 
   const technicalIssues = auditData?.technical_issues || [];
   const filteredIssues = severityFilter
@@ -99,7 +169,7 @@ export default function SEOAudit() {
                 {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             )}
-            <Button><Search className="h-4 w-4 mr-2" /> Run New Audit</Button>
+            <Button onClick={handleRunAudit}><Search className="h-4 w-4 mr-2" /> Run New Audit</Button>
           </div>
         }
       />
@@ -108,10 +178,18 @@ export default function SEOAudit() {
         <CardContent className="p-4">
           <div className="flex gap-3">
             <Input placeholder="Enter website URL (e.g., https://example.com)" value={url} onChange={(e) => setUrl(e.target.value)} className="flex-1" />
-            <Button>Analyze</Button>
+            <Button onClick={handleAnalyze}>Analyze</Button>
           </div>
         </CardContent>
       </Card>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
+          <button onClick={() => setError(null)} className="ml-auto text-red-500 hover:text-red-700">&times;</button>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -175,7 +253,7 @@ export default function SEOAudit() {
           {auditData.crawl_summary && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <StatsCard title="Pages Crawled" value={auditData.crawl_summary.pages_crawled || 0} icon={<Globe className="h-5 w-5" />} />
-              <StatsCard title="Broken Links" value={auditData.crawl_summary.broken_links || 0} icon={<AlertCircle className="h-5 w-5" />} trend="down" change={-25} />
+              <StatsCard title="Broken Links" value={auditData.crawl_summary.broken_links || 0} icon={<AlertCircle className="h-5 w-5" />} />
               <StatsCard title="Redirect Chains" value={auditData.crawl_summary.redirect_chains || 0} icon={<AlertTriangle className="h-5 w-5" />} />
               <StatsCard title="Duplicate Content" value={auditData.crawl_summary.duplicate_content || 0} icon={<Info className="h-5 w-5" />} />
             </div>

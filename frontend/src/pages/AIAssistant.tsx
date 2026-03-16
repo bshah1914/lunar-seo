@@ -4,7 +4,6 @@ import {
   User,
   Send,
   Plus,
-  MessageSquare,
   Sparkles,
   Search,
   BarChart3,
@@ -14,7 +13,6 @@ import {
   Megaphone,
   Loader2,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -36,150 +34,11 @@ interface ChatMessage {
   timestamp: string;
 }
 
-interface Conversation {
-  id: string;
-  title: string;
-  timestamp: string;
-  messages: ChatMessage[];
-}
-
-// ---------- Mock data ----------
-const initialMessages: ChatMessage[] = [
-  {
-    id: "m1",
-    role: "assistant",
-    content:
-      "Hello! I'm your AI Marketing Assistant. I can help you with SEO strategy, content ideas, competitor analysis, campaign planning, and more. What would you like to work on?",
-    timestamp: "10:00 AM",
-  },
-  {
-    id: "m2",
-    role: "user",
-    content:
-      "What are the best SEO strategies for improving our rankings for 'digital marketing tools'?",
-    timestamp: "10:02 AM",
-  },
-  {
-    id: "m3",
-    role: "assistant",
-    content: `Great question! Here are the **top SEO strategies** to improve your rankings for "digital marketing tools":
-
-### 1. Content Optimization
-- Create a comprehensive **pillar page** covering digital marketing tools in depth (3,000+ words)
-- Build **topic clusters** around related long-tail keywords like "best digital marketing tools for small business", "free digital marketing tools 2026", and "digital marketing tools comparison"
-- Ensure your content has **clear E-E-A-T signals** (Experience, Expertise, Authoritativeness, Trustworthiness)
-
-### 2. Technical SEO Improvements
-- Optimize **Core Web Vitals** — aim for LCP under 2.5s and CLS under 0.1
-- Implement proper **schema markup** (SoftwareApplication, Review, FAQ) on tool-related pages
-- Ensure mobile-first indexing readiness with responsive design
-
-### 3. Backlink Strategy
-- Target **guest posts** on high-DA marketing publications (HubSpot, Moz, Search Engine Journal)
-- Create **link-worthy assets** like original research, infographics, or free tools
-- Pursue **broken link building** on competitor resource pages
-
-### 4. On-Page Optimization
-- Optimize title tags: *"Best Digital Marketing Tools [2026] - Reviews & Comparisons"*
-- Use semantic variations naturally in headers and body copy
-- Add **FAQ sections** targeting People Also Ask queries
-
-### 5. User Experience & Engagement
-- Improve **dwell time** with interactive elements (comparison tables, filters)
-- Add video content reviewing or demonstrating tools
-- Implement **internal linking** from high-authority pages to your target content
-
-Would you like me to dive deeper into any of these strategies or create a specific action plan?`,
-    timestamp: "10:02 AM",
-  },
-  {
-    id: "m4",
-    role: "user",
-    content: "Can you create a content calendar for the next month focused on these topics?",
-    timestamp: "10:05 AM",
-  },
-  {
-    id: "m5",
-    role: "assistant",
-    content: `Absolutely! Here's a **content calendar** for the next 4 weeks targeting "digital marketing tools" and related keywords:
-
----
-
-### Week 1: Foundation Content
-| Day | Content Type | Topic | Target Keyword |
-|-----|-------------|-------|----------------|
-| Mon | Blog Post | "15 Best Digital Marketing Tools in 2026" | digital marketing tools |
-| Wed | Comparison | "HubSpot vs Semrush: Complete Comparison" | marketing tool comparison |
-| Fri | Listicle | "7 Free Digital Marketing Tools for Startups" | free digital marketing tools |
-
-### Week 2: Deep Dives
-| Day | Content Type | Topic | Target Keyword |
-|-----|-------------|-------|----------------|
-| Mon | Guide | "How to Build a Marketing Tech Stack" | marketing tech stack |
-| Wed | Review | "Semrush Review 2026: Is It Worth It?" | semrush review |
-| Fri | Tutorial | "Setting Up Marketing Automation in 30 Min" | marketing automation setup |
-
-### Week 3: Thought Leadership
-| Day | Content Type | Topic | Target Keyword |
-|-----|-------------|-------|----------------|
-| Mon | Original Research | "State of Marketing Tools: Survey Results" | marketing tools report |
-| Wed | Expert Roundup | "Top Marketers Share Their Favorite Tools" | best marketing tools |
-| Fri | Infographic | "Digital Marketing Tools Ecosystem Map" | digital marketing ecosystem |
-
-### Week 4: Conversion Content
-| Day | Content Type | Topic | Target Keyword |
-|-----|-------------|-------|----------------|
-| Mon | Case Study | "How We Increased Traffic 200% Using These Tools" | marketing tools results |
-| Wed | Buyer's Guide | "Digital Marketing Tools Buyer's Guide" | choose marketing tools |
-| Fri | Webinar Recap | "Live Demo: Top 5 Tools in Action" | marketing tools demo |
-
----
-
-**Key metrics to track:** Organic impressions, keyword ranking changes, click-through rates, and time on page for each piece.
-
-Want me to help draft any of these content pieces or suggest specific distribution strategies?`,
-    timestamp: "10:05 AM",
-  },
-];
-
-const recentConversations: Conversation[] = [
-  {
-    id: "c1",
-    title: "SEO Strategy for Digital Marketing Tools",
-    timestamp: "Today",
-    messages: initialMessages,
-  },
-  {
-    id: "c2",
-    title: "Competitor Analysis: MarketPro vs TechCorp",
-    timestamp: "Yesterday",
-    messages: [],
-  },
-  {
-    id: "c3",
-    title: "Google Ads Budget Optimization",
-    timestamp: "Mar 14",
-    messages: [],
-  },
-  {
-    id: "c4",
-    title: "Content Ideas for Q2 Campaign",
-    timestamp: "Mar 12",
-    messages: [],
-  },
-  {
-    id: "c5",
-    title: "Backlink Outreach Strategy",
-    timestamp: "Mar 10",
-    messages: [],
-  },
-  {
-    id: "c6",
-    title: "Social Media Content Plan",
-    timestamp: "Mar 8",
-    messages: [],
-  },
-];
+const API = '/api/v1';
+const getHeaders = () => ({
+  'Authorization': `Bearer ${localStorage.getItem('token')}`,
+  'Content-Type': 'application/json',
+});
 
 const quickSuggestions = [
   { label: "Analyze my website SEO", icon: <Search className="h-4 w-4" /> },
@@ -190,20 +49,48 @@ const quickSuggestions = [
   { label: "Improve my ad performance", icon: <Target className="h-4 w-4" /> },
 ];
 
+const WELCOME_MESSAGE: ChatMessage = {
+  id: "welcome",
+  role: "assistant",
+  content:
+    "Hello! I'm your AI Marketing Assistant. I can help you with SEO strategy, content ideas, competitor analysis, campaign planning, and more. What would you like to work on?",
+  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+};
+
 // ---------- Component ----------
 const AIAssistant: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [activeConversation, setActiveConversation] = useState("c1");
+  const [error, setError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Client selector
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState<string>("all");
+
+  useEffect(() => {
+    fetch(`${API}/clients/`, { headers: getHeaders() })
+      .then(r => {
+        if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (!d) return;
+        const clientList = d.clients || d || [];
+        const list = Array.isArray(clientList) ? clientList : [];
+        setClients(list);
+      })
+      .catch(() => setClients([]));
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
   const handleSend = () => {
-    if (!input.trim()) return;
+    if (!input.trim() || isTyping) return;
 
     const userMessage: ChatMessage = {
       id: `m-${Date.now()}`,
@@ -213,21 +100,47 @@ const AIAssistant: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const messageText = input.trim();
     setInput("");
     setIsTyping(true);
+    setError("");
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: ChatMessage = {
-        id: `m-${Date.now() + 1}`,
-        role: "assistant",
-        content:
-          "That's a great question! Let me analyze the data and provide you with actionable insights. Based on your current performance metrics and industry benchmarks, I'd recommend focusing on the following areas...\n\nI'll need a moment to pull the latest data from your connected accounts to give you the most accurate recommendations.",
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-      setIsTyping(false);
-    }, 2000);
+    fetch(`${API}/ai/chat?message=${encodeURIComponent(messageText)}`, {
+      method: 'POST',
+      headers: getHeaders(),
+    })
+      .then(r => {
+        if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        if (!data) return;
+        const aiMessage: ChatMessage = {
+          id: `m-${Date.now() + 1}`,
+          role: "assistant",
+          content: data.response || "I received your message but got an empty response. Please try again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+      })
+      .catch((e) => {
+        setError(e.message || "Failed to get AI response");
+        const errorMessage: ChatMessage = {
+          id: `m-${Date.now() + 1}`,
+          role: "assistant",
+          content: "Sorry, I encountered an error processing your request. Please try again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      })
+      .finally(() => setIsTyping(false));
+  };
+
+  const handleNewChat = () => {
+    setMessages([WELCOME_MESSAGE]);
+    setInput("");
+    setError("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -246,37 +159,19 @@ const AIAssistant: React.FC = () => {
       {/* Left sidebar */}
       <div className="hidden w-64 shrink-0 flex-col border-r bg-gray-50/50 md:flex">
         <div className="p-3">
-          <Button className="w-full justify-start" variant="outline">
+          <Button className="w-full justify-start" variant="outline" onClick={handleNewChat}>
             <Plus className="mr-2 h-4 w-4" /> New Chat
           </Button>
         </div>
         <Separator />
-        <ScrollArea className="flex-1 px-2 py-2">
+        <div className="flex-1 px-4 py-4">
           <p className="mb-2 px-2 text-xs font-medium text-gray-400 uppercase tracking-wider">
-            Recent Conversations
+            Tips
           </p>
-          <div className="space-y-1">
-            {recentConversations.map((conv) => (
-              <button
-                key={conv.id}
-                onClick={() => setActiveConversation(conv.id)}
-                className={`flex w-full flex-col items-start rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-gray-100 ${
-                  activeConversation === conv.id
-                    ? "bg-gray-100 border border-gray-200"
-                    : ""
-                }`}
-              >
-                <div className="flex w-full items-center gap-2">
-                  <MessageSquare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                  <span className="truncate text-sm font-medium text-gray-700">
-                    {conv.title}
-                  </span>
-                </div>
-                <span className="mt-0.5 pl-5.5 text-xs text-gray-400">{conv.timestamp}</span>
-              </button>
-            ))}
-          </div>
-        </ScrollArea>
+          <p className="px-2 text-xs text-gray-500">
+            Use the quick suggestions below the chat or type your own marketing questions.
+          </p>
+        </div>
       </div>
 
       {/* Main chat area */}
@@ -291,6 +186,13 @@ const AIAssistant: React.FC = () => {
             <p className="text-xs text-gray-500">Powered by advanced AI &middot; Always learning</p>
           </div>
         </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="mx-4 mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
         {/* Messages */}
         <ScrollArea className="flex-1 px-4 py-4">
@@ -379,16 +281,15 @@ const AIAssistant: React.FC = () => {
           <div className="mx-auto max-w-3xl">
             <div className="flex items-end gap-2">
               {/* Client context selector */}
-              <Select>
+              <Select value={selectedClient} onValueChange={setSelectedClient}>
                 <SelectTrigger className="w-36 shrink-0">
                   <SelectValue placeholder="All Clients" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Clients</SelectItem>
-                  <SelectItem value="techcorp">TechCorp</SelectItem>
-                  <SelectItem value="marketpro">MarketPro</SelectItem>
-                  <SelectItem value="growthco">GrowthCo</SelectItem>
-                  <SelectItem value="startupxyz">StartupXYZ</SelectItem>
+                  {clients.map((c: any) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
 

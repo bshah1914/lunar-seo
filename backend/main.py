@@ -18,6 +18,7 @@ from api.routes import (
     alerts,
     competitors,
     seo_by_ai,
+    bugs,
 )
 
 
@@ -58,6 +59,7 @@ app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"])
 app.include_router(ai_assistant.router, prefix="/api/v1/ai", tags=["AI Assistant"])
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["Alerts"])
 app.include_router(seo_by_ai.router, prefix="/api/v1/seo-by-ai", tags=["SEO By AI"])
+app.include_router(bugs.router, prefix="/api/v1/bugs", tags=["Bug Reports"])
 
 
 @app.get("/")

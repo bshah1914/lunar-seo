@@ -21,16 +21,25 @@ const Settings = lazy(() => import('./pages/Settings'))
 const SEOByAI = lazy(() => import('./pages/SEOByAI'))
 const Login = lazy(() => import('./pages/Login'))
 const Documentation = lazy(() => import('./pages/Documentation'))
+const BugReport = lazy(() => import('./pages/BugReport'))
 
 function LoadingFallback() {
   return (
     <div className="flex items-center justify-center h-screen">
       <div className="flex flex-col items-center gap-4">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        <p className="text-muted-foreground">Loading...</p>
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+        <p className="text-gray-500">Loading...</p>
       </div>
     </div>
   )
+}
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const token = localStorage.getItem('token')
+  if (!token) {
+    return <Navigate to="/login" replace />
+  }
+  return <>{children}</>
 }
 
 export default function App() {
@@ -38,7 +47,7 @@ export default function App() {
     <Suspense fallback={<LoadingFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/" element={<MainLayout />}>
+        <Route path="/" element={<RequireAuth><MainLayout /></RequireAuth>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="clients" element={<Clients />} />
@@ -58,6 +67,7 @@ export default function App() {
           <Route path="seo-by-ai" element={<SEOByAI />} />
           <Route path="settings" element={<Settings />} />
           <Route path="documentation" element={<Documentation />} />
+          <Route path="bug-report" element={<BugReport />} />
         </Route>
       </Routes>
     </Suspense>

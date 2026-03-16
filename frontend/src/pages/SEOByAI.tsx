@@ -105,7 +105,7 @@ export default function SEOByAI() {
       .catch(() => setClients([]));
   }, []);
 
-  useEffect(() => {
+  const fetchData = () => {
     if (!selectedClient) return;
     setLoading(true);
     Promise.all([
@@ -119,17 +119,40 @@ export default function SEOByAI() {
       setStrategy(strategyRes);
       setPredictions(predictionsRes);
     }).finally(() => setLoading(false));
-  }, [selectedClient]);
+  };
 
-  const insights = status?.insights || [];
-  const actionCategories = actionPlan?.categories || actionPlan?.action_categories || [];
-  const strategyMatrix = strategy?.priority_matrix || strategy?.strategyPriorityMatrix || [];
-  const channelAllocation = strategy?.channel_allocation || strategy?.channelAllocation || [];
-  const forecastCards = predictions?.forecast_cards || predictions?.forecastCards || [];
-  const trafficForecast = predictions?.traffic_forecast || predictions?.trafficForecastData || [];
-  const keywordPredictions = predictions?.keyword_predictions || predictions?.keywordPredictions || [];
+  useEffect(() => { fetchData(); }, [selectedClient]);
 
-  const hasData = insights.length > 0 || actionCategories.length > 0 || strategyMatrix.length > 0 || forecastCards.length > 0;
+  const insights = status?.ai_insights || status?.insights || [];
+  const lifetimeStats = status?.lifetime_stats || {};
+  const aiAgent = status?.ai_agent || {};
+  const activeMonitors = status?.active_monitors || [];
+
+  // action_plan.categories is an object like {technical_seo: {actions: [...]}, content: {...}, ...}
+  const actionCategoriesObj = actionPlan?.categories || {};
+  const actionCategories = Object.entries(actionCategoriesObj).map(([key, val]: [string, any]) => ({
+    id: key,
+    name: key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+    icon: val?.icon || 'wrench',
+    total: val?.total || val?.actions?.length || 0,
+    completed: val?.completed || val?.actions?.filter((a: any) => a.status === 'completed').length || 0,
+    actions: val?.actions || [],
+  }));
+
+  const strategyMatrix = strategy?.priority_matrix || [];
+  const channelStrategy = strategy?.channel_strategy || {};
+  const channelAllocation = Object.entries(channelStrategy).map(([key, val]: [string, any]) => ({
+    name: key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+    allocation: val?.allocation || 0,
+    focus: val?.focus || '',
+  }));
+  const forecast90 = strategy?.['90_day_forecast'] || {};
+
+  const trafficForecast = predictions?.traffic_forecast || [];
+  const keywordPredictions = predictions?.keyword_predictions || [];
+  const riskAlerts = predictions?.risk_alerts || [];
+
+  const hasData = insights.length > 0 || actionCategories.length > 0 || strategyMatrix.length > 0 || trafficForecast.length > 0 || !!status;
 
   return (
     <div className="space-y-6 p-6">
@@ -151,7 +174,7 @@ export default function SEOByAI() {
               {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}
-          <Button variant="outline"><RefreshCw className="w-4 h-4 mr-2" /> Refresh</Button>
+          <Button variant="outline" onClick={fetchData}><RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Refresh</Button>
         </div>
       </div>
 
@@ -183,27 +206,51 @@ export default function SEOByAI() {
             {insights.length > 0 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">AI-Generated Insights</h2>
-                {insights.map((insight: any, idx: number) => (
-                  <Card key={idx} className={`border-l-4 ${insight.color || 'border-l-blue-500'}`}>
+                {insights.map((insight: any, idx: number) => {
+                  const typeColors: Record<string, string> = {
+                    opportunity: 'border-l-green-500',
+                    threat: 'border-l-red-500',
+                    success: 'border-l-blue-500',
+                    recommendation: 'border-l-yellow-500',
+                  };
+                  const typeBadgeColors: Record<string, string> = {
+                    opportunity: 'bg-green-100 text-green-800',
+                    threat: 'bg-red-100 text-red-800',
+                    success: 'bg-blue-100 text-blue-800',
+                    recommendation: 'bg-yellow-100 text-yellow-800',
+                  };
+                  return (
+                  <Card key={idx} className={`border-l-4 ${typeColors[insight.type] || 'border-l-blue-500'}`}>
                     <CardContent className="py-4">
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 shrink-0">
-                          {insight.type === "Opportunity" && <Target className="h-5 w-5 text-green-500" />}
-                          {insight.type === "Threat" && <Shield className="h-5 w-5 text-red-500" />}
-                          {insight.type === "Success" && <TrendingUp className="h-5 w-5 text-blue-500" />}
-                          {insight.type === "Recommendation" && <Sparkles className="h-5 w-5 text-yellow-500" />}
+                          {insight.type === "opportunity" && <Target className="h-5 w-5 text-green-500" />}
+                          {insight.type === "threat" && <Shield className="h-5 w-5 text-red-500" />}
+                          {insight.type === "success" && <TrendingUp className="h-5 w-5 text-blue-500" />}
+                          {insight.type === "recommendation" && <Sparkles className="h-5 w-5 text-yellow-500" />}
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <Badge className={insight.badgeColor || 'bg-gray-100 text-gray-800'}>{insight.type}</Badge>
-                            {insight.confidence && <span className="text-xs text-muted-foreground">{insight.confidence}% confidence</span>}
+                            <Badge className={typeBadgeColors[insight.type] || 'bg-gray-100 text-gray-800'}>{insight.type?.charAt(0).toUpperCase() + insight.type?.slice(1)}</Badge>
+                            {insight.confidence && <span className="text-xs text-muted-foreground">{Math.round(insight.confidence * 100)}% confidence</span>}
                           </div>
-                          <p className="text-sm text-gray-700">{insight.text}</p>
+                          <p className="text-sm text-gray-700">{insight.message || insight.text}</p>
                         </div>
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Lifetime Stats */}
+            {Object.keys(lifetimeStats).length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-purple-600">{lifetimeStats.total_actions_executed || 0}</p><p className="text-xs text-muted-foreground mt-1">Actions Taken</p></CardContent></Card>
+                <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{lifetimeStats.success_rate || 0}%</p><p className="text-xs text-muted-foreground mt-1">Success Rate</p></CardContent></Card>
+                <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-blue-600">{lifetimeStats.traffic_increase_pct || 0}%</p><p className="text-xs text-muted-foreground mt-1">Traffic Increase</p></CardContent></Card>
+                <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-orange-600">{lifetimeStats.estimated_value_created || '$0'}</p><p className="text-xs text-muted-foreground mt-1">Value Created</p></CardContent></Card>
               </div>
             )}
 
@@ -318,9 +365,9 @@ export default function SEOByAI() {
 
           {/* Predictions Tab */}
           <TabsContent value="predictions" className="mt-6 space-y-6">
-            {forecastCards.length > 0 && (
+            {trafficForecast.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {forecastCards.map((card: any, idx: number) => (
+                {trafficForecast.map((card: any, idx: number) => (
                   <Card key={idx}>
                     <CardContent className="p-4 text-center">
                       <p className="text-xs text-muted-foreground">{card.label}</p>
@@ -392,7 +439,7 @@ export default function SEOByAI() {
               </Card>
             )}
 
-            {forecastCards.length === 0 && trafficForecast.length === 0 && keywordPredictions.length === 0 && (
+            {trafficForecast.length === 0 && trafficForecast.length === 0 && keywordPredictions.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <Activity className="h-12 w-12 text-gray-300 mb-4" />
                 <h3 className="text-lg font-medium text-gray-900">No predictions available</h3>

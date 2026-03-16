@@ -1,9 +1,9 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import {
   LayoutDashboard, Building2, Search, Key, Link, Swords,
   FileText, Image, Share2, Megaphone, Target, BarChart3,
-  Bot, Bell, Settings, ChevronLeft, ChevronRight, Rocket, Brain, BookOpen
+  Bot, Bell, Settings, ChevronLeft, ChevronRight, Rocket, Brain, BookOpen, LogOut, Bug
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +27,11 @@ const navItems = [
 ]
 
 export default function Sidebar() {
+  const navigate = useNavigate()
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    navigate('/login')
+  }
   const [collapsed, setCollapsed] = useState(false)
 
   return (
@@ -64,6 +69,16 @@ export default function Sidebar() {
       {/* Bottom */}
       <div className="border-t border-slate-800 p-2 space-y-1">
         <NavLink
+          to="/bug-report"
+          className={({ isActive }) => cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+            isActive ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+          )}
+        >
+          <Bug className="w-5 h-5 flex-shrink-0" />
+          {!collapsed && <span>Bug Report</span>}
+        </NavLink>
+        <NavLink
           to="/settings"
           className={({ isActive }) => cn(
             'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
@@ -73,6 +88,13 @@ export default function Sidebar() {
           <Settings className="w-5 h-5 flex-shrink-0" />
           {!collapsed && <span>Settings</span>}
         </NavLink>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-400 hover:bg-red-900/20 hover:text-red-300 w-full transition-colors"
+        >
+          <LogOut className="w-5 h-5 flex-shrink-0" />
+          {!collapsed && <span>Logout</span>}
+        </button>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white w-full transition-colors"

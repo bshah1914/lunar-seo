@@ -44,6 +44,13 @@ const getHeaders = () => ({
   'Content-Type': 'application/json',
 });
 
+const safeFetch = async (url: string, options: RequestInit = {}) => {
+  const res = await fetch(url, { ...options, headers: { ...getHeaders(), ...options.headers } });
+  if (res.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+  if (!res.ok) throw new Error(`Error: ${res.status}`);
+  return res.json();
+};
+
 type ImageType = "instagram-post" | "facebook-ad" | "linkedin-banner" | "blog-thumbnail" | "website-banner" | "youtube-thumbnail";
 type ImageStyle = "photorealistic" | "illustration" | "minimal" | "abstract" | "corporate" | "vibrant";
 
@@ -66,6 +73,7 @@ interface GeneratedImage {
   textOverlay: string;
   brandColors: string[];
   createdAt: string;
+  url?: string;
 }
 
 const TEMPLATES: ImageTemplate[] = [
@@ -125,7 +133,7 @@ function TemplateCard({ template, selected, onClick }: { template: ImageTemplate
   );
 }
 
-function ImageCard({ image, onView, onDelete }: { image: GeneratedImage; onView: (id: string) => void; onDelete: (id: string) => void; }) {
+function ImageCard({ image, onView, onDelete, onDownload }: { image: GeneratedImage; onView: (id: string) => void; onDelete: (id: string) => void; onDownload: (image: GeneratedImage) => void; }) {
   const template = templateForType(image.type);
   const aspectClass = template.width === template.height ? "aspect-square" : template.width / template.height > 2 ? "aspect-[4/1]" : "aspect-video";
   return (
@@ -142,7 +150,7 @@ function ImageCard({ image, onView, onDelete }: { image: GeneratedImage; onView:
         <div className="flex items-center justify-between pt-1 border-t">
           <span className="text-[10px] text-gray-400">{image.createdAt}</span>
           <div className="flex gap-1">
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download"><Download className="w-3.5 h-3.5" /></Button>
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download" onClick={() => onDownload(image)}><Download className="w-3.5 h-3.5" /></Button>
             <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Delete" onClick={() => onDelete(image.id)}><Trash2 className="w-3.5 h-3.5 text-red-500" /></Button>
           </div>
         </div>
@@ -162,6 +170,7 @@ export default function ImageStudio() {
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -169,32 +178,79 @@ export default function ImageStudio() {
   const selectedTpl = TEMPLATES.find((t) => t.type === selectedTemplate)!;
 
   useEffect(() => {
-    fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+    safeFetch(`${API}/clients/`)
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((err) => { setClients([]); setError(err.message); });
   }, []);
 
-  useEffect(() => {
+  const fetchImages = () => {
     if (!selectedClient) return;
     setLoading(true);
-    fetch(`${API}/images/${selectedClient}/images`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError(null);
+    safeFetch(`${API}/images/${selectedClient}/images`)
       .then(d => {
+        if (!d) return;
         const imgs = d.images || d || [];
         setImages(Array.isArray(imgs) ? imgs : []);
       })
-      .catch(() => setImages([]))
+      .catch((err) => { setImages([]); setError(err.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchImages();
   }, [selectedClient]);
 
-  function handleDelete(id: string) {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+  async function handleGenerate() {
+    if (!prompt.trim() || !selectedClient) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        prompt: prompt.trim(),
+        image_type: selectedTemplate,
+        style: style,
+      });
+      const result = await safeFetch(`${API}/images/${selectedClient}/images/generate?${params.toString()}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (result) {
+        setPrompt("");
+        setTextOverlay("");
+        fetchImages();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate image');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!selectedClient) return;
+    setError(null);
+    try {
+      const result = await safeFetch(`${API}/images/${selectedClient}/images/${id}`, {
+        method: 'DELETE',
+      });
+      if (result !== null) {
+        setImages((prev) => prev.filter((img) => img.id !== id));
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete image');
+    }
+  }
+
+  function handleDownload(image: GeneratedImage) {
+    const imageUrl = image.url || `${API}/images/${selectedClient}/images/${image.id}/download`;
+    alert(`Image URL: ${imageUrl}`);
   }
 
   return (
@@ -207,9 +263,20 @@ export default function ImageStudio() {
               {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}
-          <Button><Wand2 className="w-4 h-4 mr-2" />Generate Image</Button>
+          <Button onClick={handleGenerate} disabled={!prompt.trim() || generating}>
+            {generating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            <Wand2 className="w-4 h-4 mr-2" />Generate Image
+          </Button>
         </div>
       </PageHeader>
+
+      {/* Error message */}
+      {error && (
+        <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-2 text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
 
       {/* Template Gallery */}
       <div>
@@ -254,7 +321,25 @@ export default function ImageStudio() {
                 <label className="text-sm font-medium mb-1 flex items-center gap-1"><Type className="w-3.5 h-3.5" /> Text Overlay</label>
                 <Input placeholder="Text to display on the image" value={textOverlay} onChange={(e) => setTextOverlay(e.target.value)} />
               </div>
-              <Button className="w-full mt-2" disabled={!prompt.trim()}><Wand2 className="w-4 h-4 mr-2" />Generate Image</Button>
+              <div>
+                <label className="text-sm font-medium mb-1 flex items-center gap-1"><Palette className="w-3.5 h-3.5" /> Brand Colors</label>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">Primary</label>
+                    <input type="color" value={brandColor1} onChange={(e) => setBrandColor1(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-gray-300" />
+                    <span className="text-xs text-gray-400">{brandColor1}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">Secondary</label>
+                    <input type="color" value={brandColor2} onChange={(e) => setBrandColor2(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-gray-300" />
+                    <span className="text-xs text-gray-400">{brandColor2}</span>
+                  </div>
+                </div>
+              </div>
+              <Button className="w-full mt-2" disabled={!prompt.trim() || generating} onClick={handleGenerate}>
+                {generating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                <Wand2 className="w-4 h-4 mr-2" />Generate Image
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -282,7 +367,7 @@ export default function ImageStudio() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {images.map((img) => (
-                <ImageCard key={img.id} image={img} onView={setViewingId} onDelete={handleDelete} />
+                <ImageCard key={img.id} image={img} onView={setViewingId} onDelete={handleDelete} onDownload={handleDownload} />
               ))}
             </div>
           )}

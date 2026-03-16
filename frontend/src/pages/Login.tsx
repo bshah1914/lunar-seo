@@ -17,18 +17,6 @@ const loginSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>
 
 // ---------------------------------------------------------------------------
-// Minimal inline auth store (works without external zustand file)
-// In production, import from @/store/authStore
-// ---------------------------------------------------------------------------
-
-let _authToken: string | null = null
-
-function setAuthToken(token: string) {
-  _authToken = token
-  localStorage.setItem('auth_token', token)
-}
-
-// ---------------------------------------------------------------------------
 // Login Page
 // ---------------------------------------------------------------------------
 
@@ -49,20 +37,26 @@ export default function Login() {
     },
   })
 
+  const [error, setError] = React.useState('')
+
   const onSubmit = async (data: LoginFormData) => {
     setIsLoading(true)
+    setError('')
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1200))
-
-      // Store mock token
-      const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mock-token'
-      setAuthToken(mockToken)
-
-      // Redirect to dashboard
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: data.email, password: data.password }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Invalid email or password')
+      }
+      const result = await res.json()
+      localStorage.setItem('token', result.access_token)
       navigate('/dashboard')
-    } catch {
-      // handle error
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -89,6 +83,11 @@ export default function Login() {
           </div>
 
           {/* Form */}
+          {error && (
+            <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">
+              {error}
+            </div>
+          )}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             {/* Email */}
             <div>

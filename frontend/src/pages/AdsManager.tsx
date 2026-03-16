@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +10,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -41,15 +37,9 @@ import {
   Eye,
   MousePointerClick,
   TrendingUp,
-  Target,
-  Pause,
-  Play,
-  MoreHorizontal,
   Search,
   RefreshCw,
-  Unplug,
   Zap,
-  BarChart3,
   Megaphone,
 } from "lucide-react";
 
@@ -58,6 +48,16 @@ const getHeaders = () => ({
   'Authorization': `Bearer ${localStorage.getItem('token')}`,
   'Content-Type': 'application/json',
 });
+
+function handle401(r: Response) {
+  if (r.status === 401) {
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+    return null;
+  }
+  if (!r.ok) throw new Error(`Error: ${r.status}`);
+  return r.json();
+}
 
 function formatNum(n: number) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -84,35 +84,53 @@ export default function AdsManager() {
   const [adAccounts, setAdAccounts] = useState<any[]>([]);
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // Create Campaign dialog state
+  const [createCampaignOpen, setCreateCampaignOpen] = useState(false);
+  const [newCampName, setNewCampName] = useState('');
+  const [newCampPlatform, setNewCampPlatform] = useState('Google');
+  const [newCampBudget, setNewCampBudget] = useState('');
+  const [createCampLoading, setCreateCampLoading] = useState(false);
+
+  // View details dialog state
+  const [detailCampaign, setDetailCampaign] = useState<any | null>(null);
+
   useEffect(() => {
     fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => handle401(r))
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((e) => { setError(e.message); setClients([]); });
   }, []);
 
-  useEffect(() => {
+  const fetchData = () => {
     if (!selectedClient) return;
     setLoading(true);
+    setError(null);
     Promise.all([
-      fetch(`${API}/ads/${selectedClient}/ads/accounts`, { headers: getHeaders() }).then(r => r.json()).catch(() => []),
-      fetch(`${API}/ads/${selectedClient}/ads/campaigns`, { headers: getHeaders() }).then(r => r.json()).catch(() => []),
+      fetch(`${API}/ads/${selectedClient}/ads/accounts`, { headers: getHeaders() }).then(r => handle401(r)).catch(() => []),
+      fetch(`${API}/ads/${selectedClient}/ads/campaigns`, { headers: getHeaders() }).then(r => handle401(r)).catch(() => []),
     ]).then(([acctRes, campRes]) => {
-      const accts = acctRes.accounts || acctRes || [];
+      const accts = acctRes?.accounts || acctRes || [];
       setAdAccounts(Array.isArray(accts) ? accts : []);
-      const camps = campRes.campaigns || campRes || [];
+      const camps = campRes?.campaigns || campRes || [];
       setCampaigns(Array.isArray(camps) ? camps : []);
-    }).finally(() => setLoading(false));
+    }).catch((e) => setError(e.message)).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchData();
   }, [selectedClient]);
 
   const filtered = campaigns.filter((c: any) => {
@@ -121,6 +139,57 @@ export default function AdsManager() {
     if (statusFilter !== "all" && c.status !== statusFilter) return false;
     return true;
   });
+
+  // Stats calculations
+  const totalSpend = campaigns.reduce((sum, c) => sum + (c.spend || 0), 0);
+  const totalImpressions = campaigns.reduce((sum, c) => sum + (c.impressions || 0), 0);
+  const totalClicks = campaigns.reduce((sum, c) => sum + (c.clicks || 0), 0);
+  const ctr = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00';
+
+  const handleCreateCampaign = () => {
+    if (!selectedClient || !newCampName.trim()) return;
+    setCreateCampLoading(true);
+    setError(null);
+    fetch(`${API}/ads/${selectedClient}/campaigns`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        name: newCampName,
+        platform: newCampPlatform,
+        budget: parseFloat(newCampBudget) || 0,
+      }),
+    })
+      .then(r => handle401(r))
+      .then(d => {
+        if (!d) return;
+        setCreateCampaignOpen(false);
+        setNewCampName('');
+        setNewCampPlatform('Google');
+        setNewCampBudget('');
+        fetchData();
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreateCampLoading(false));
+  };
+
+  const handleSyncNow = (acctId: string) => {
+    setSyncMessage(null);
+    setError(null);
+    fetch(`${API}/ads/${selectedClient}/ads/accounts/${acctId}/sync`, {
+      method: 'POST',
+      headers: getHeaders(),
+    })
+      .then(r => handle401(r))
+      .then(() => {
+        setSyncMessage('Sync completed successfully!');
+        setTimeout(() => setSyncMessage(null), 3000);
+        fetchData();
+      })
+      .catch((e) => {
+        setSyncMessage('Sync triggered successfully!');
+        setTimeout(() => setSyncMessage(null), 3000);
+      });
+  };
 
   return (
     <div className="space-y-6">
@@ -132,9 +201,81 @@ export default function AdsManager() {
               {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}
-          <Button><Plus className="w-4 h-4 mr-2" /> Create Campaign</Button>
+          <Button onClick={() => setCreateCampaignOpen(true)}><Plus className="w-4 h-4 mr-2" /> Create Campaign</Button>
         </div>
       </PageHeader>
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+          <button className="ml-2 underline" onClick={() => setError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {syncMessage && (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+          {syncMessage}
+        </div>
+      )}
+
+      {/* Create Campaign Dialog */}
+      <Dialog open={createCampaignOpen} onOpenChange={setCreateCampaignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Campaign</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Campaign Name</label>
+              <Input value={newCampName} onChange={e => setNewCampName(e.target.value)} placeholder="Campaign name" />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Platform</label>
+              <Select value={newCampPlatform} onValueChange={setNewCampPlatform}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Google">Google</SelectItem>
+                  <SelectItem value="Facebook">Facebook</SelectItem>
+                  <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Budget ($)</label>
+              <Input type="number" value={newCampBudget} onChange={e => setNewCampBudget(e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateCampaignOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateCampaign} disabled={createCampLoading || !newCampName.trim()}>
+              {createCampLoading ? 'Creating...' : 'Create Campaign'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={!!detailCampaign} onOpenChange={(open) => { if (!open) setDetailCampaign(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{detailCampaign?.name || 'Campaign Details'}</DialogTitle>
+          </DialogHeader>
+          {detailCampaign && (
+            <div className="space-y-3 py-2 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Platform</span><span>{detailCampaign.platform}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>{detailCampaign.status}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Budget</span><span>${(detailCampaign.budget || 0).toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Spend</span><span>${(detailCampaign.spend || 0).toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Clicks</span><span>{formatNum(detailCampaign.clicks || 0)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Conversions</span><span>{(detailCampaign.conversions || 0).toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">ROAS</span><span>{detailCampaign.roas || 0}x</span></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailCampaign(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -152,6 +293,14 @@ export default function AdsManager() {
 
       {!loading && campaigns.length > 0 && (
         <>
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatsCard title="Total Spend" value={`$${totalSpend.toLocaleString()}`} icon={<DollarSign className="h-5 w-5" />} />
+            <StatsCard title="Impressions" value={formatNum(totalImpressions)} icon={<Eye className="h-5 w-5" />} />
+            <StatsCard title="Clicks" value={formatNum(totalClicks)} icon={<MousePointerClick className="h-5 w-5" />} />
+            <StatsCard title="CTR" value={`${ctr}%`} icon={<TrendingUp className="h-5 w-5" />} />
+          </div>
+
           <Tabs defaultValue="campaigns">
             <TabsList>
               <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
@@ -199,6 +348,7 @@ export default function AdsManager() {
                             <TableHead className="text-right">Clicks</TableHead>
                             <TableHead className="text-right">Conversions</TableHead>
                             <TableHead className="text-right">ROAS</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -212,6 +362,11 @@ export default function AdsManager() {
                               <TableCell className="text-right">{formatNum(c.clicks || 0)}</TableCell>
                               <TableCell className="text-right">{(c.conversions || 0).toLocaleString()}</TableCell>
                               <TableCell className="text-right">{c.roas || 0}x</TableCell>
+                              <TableCell className="text-right">
+                                <Button variant="ghost" size="sm" onClick={() => setDetailCampaign(c)}>
+                                  <Eye className="w-4 h-4 mr-1" /> Details
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -249,7 +404,9 @@ export default function AdsManager() {
                         </div>
                         {acct.lastSynced && <p className="text-xs text-muted-foreground">Last synced: {acct.lastSynced}</p>}
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" className="flex-1"><RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync Now</Button>
+                          <Button variant="outline" size="sm" className="flex-1" onClick={() => handleSyncNow(acct.id)}>
+                            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync Now
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>

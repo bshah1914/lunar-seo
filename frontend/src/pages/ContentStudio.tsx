@@ -50,6 +50,13 @@ const getHeaders = () => ({
   'Content-Type': 'application/json',
 });
 
+const safeFetch = async (url: string, options: RequestInit = {}) => {
+  const res = await fetch(url, { ...options, headers: { ...getHeaders(), ...options.headers } });
+  if (res.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+  if (!res.ok) throw new Error(`Error: ${res.status}`);
+  return res.json();
+};
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -196,6 +203,7 @@ export default function ContentStudio() {
   const [content, setContent] = useState<ContentPiece[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -208,29 +216,51 @@ export default function ContentStudio() {
   const [newLength, setNewLength] = useState<ContentLength>("medium");
   const [newInstructions, setNewInstructions] = useState("");
 
+  const resetFormFields = () => {
+    setNewType("blog");
+    setNewTitle("");
+    setNewKeywords("");
+    setNewTone("professional");
+    setNewLength("medium");
+    setNewInstructions("");
+    setEditingId(null);
+  };
+
+  const handleDialogClose = (open: boolean) => {
+    if (!open) {
+      resetFormFields();
+    }
+    setCreateOpen(open);
+  };
+
   useEffect(() => {
-    fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+    safeFetch(`${API}/clients/`)
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((err) => { setClients([]); setError(err.message); });
   }, []);
 
-  useEffect(() => {
+  const fetchContent = () => {
     if (!selectedClient) return;
     setLoading(true);
-    fetch(`${API}/content/${selectedClient}/content`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError(null);
+    safeFetch(`${API}/content/${selectedClient}/content`)
       .then(d => {
+        if (!d) return;
         const items = d.content || d || [];
         setContent(Array.isArray(items) ? items : []);
       })
-      .catch(() => setContent([]))
+      .catch((err) => { setContent([]); setError(err.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchContent();
   }, [selectedClient]);
 
   // Stats
@@ -247,8 +277,58 @@ export default function ContentStudio() {
     return typeMatch && searchMatch;
   });
 
-  function handleDelete(id: string) {
-    setContent((prev) => prev.filter((c) => c.id !== id));
+  async function handleDelete(id: string) {
+    if (!selectedClient) return;
+    setError(null);
+    try {
+      const result = await safeFetch(`${API}/content/${selectedClient}/content/${id}`, {
+        method: 'DELETE',
+      });
+      if (result !== null) {
+        setContent((prev) => prev.filter((c) => c.id !== id));
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete content');
+    }
+  }
+
+  function handleEdit(id: string) {
+    const piece = content.find((c) => c.id === id);
+    if (!piece) return;
+    setEditingId(id);
+    setNewType(piece.type);
+    setNewTitle(piece.title);
+    setNewKeywords((piece.keywords || []).join(', '));
+    setNewTone("professional");
+    setNewLength("medium");
+    setNewInstructions("");
+    setCreateOpen(true);
+  }
+
+  async function handleGenerate() {
+    if (!newTitle.trim() || !selectedClient) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        content_type: newType,
+        topic: newTitle.trim(),
+        tone: newTone,
+        length: newLength,
+      });
+      const result = await safeFetch(`${API}/content/${selectedClient}/content/generate?${params.toString()}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (result) {
+        handleDialogClose(false);
+        fetchContent();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate content');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
@@ -261,9 +341,17 @@ export default function ContentStudio() {
               {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}
-          <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-2" />Create Content</Button>
+          <Button onClick={() => { resetFormFields(); setCreateOpen(true); }}><Plus className="w-4 h-4 mr-2" />Create Content</Button>
         </div>
       </PageHeader>
+
+      {/* Error message */}
+      {error && (
+        <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-2 text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -319,23 +407,23 @@ export default function ContentStudio() {
           ) : viewMode === "grid" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {filtered.map((piece) => (
-                <ContentCard key={piece.id} piece={piece} viewMode="grid" onEdit={setEditingId} onDelete={handleDelete} />
+                <ContentCard key={piece.id} piece={piece} viewMode="grid" onEdit={handleEdit} onDelete={handleDelete} />
               ))}
             </div>
           ) : (
             <div className="space-y-2">
               {filtered.map((piece) => (
-                <ContentCard key={piece.id} piece={piece} viewMode="list" onEdit={setEditingId} onDelete={handleDelete} />
+                <ContentCard key={piece.id} piece={piece} viewMode="list" onEdit={handleEdit} onDelete={handleDelete} />
               ))}
             </div>
           )}
         </>
       )}
 
-      {/* Create Content Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      {/* Create / Edit Content Dialog */}
+      <Dialog open={createOpen} onOpenChange={handleDialogClose}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Create New Content</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingId ? 'Edit Content' : 'Create New Content'}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-1 block">Content Type</label>
@@ -358,10 +446,42 @@ export default function ContentStudio() {
               <label className="text-sm font-medium mb-1 block">Target Keywords</label>
               <Input placeholder="Comma separated" value={newKeywords} onChange={(e) => setNewKeywords(e.target.value)} />
             </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Tone</label>
+              <Select value={newTone} onValueChange={(v) => setNewTone(v as Tone)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="professional">Professional</SelectItem>
+                  <SelectItem value="casual">Casual</SelectItem>
+                  <SelectItem value="persuasive">Persuasive</SelectItem>
+                  <SelectItem value="educational">Educational</SelectItem>
+                  <SelectItem value="humorous">Humorous</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Length</label>
+              <Select value={newLength} onValueChange={(v) => setNewLength(v as ContentLength)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="short">Short</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="long">Long</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Additional Instructions</label>
+              <Textarea placeholder="Any specific instructions for content generation..." rows={3} value={newInstructions} onChange={(e) => setNewInstructions(e.target.value)} />
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button disabled={!newTitle.trim()}><Sparkles className="w-4 h-4 mr-2" />Generate with AI</Button>
+            <Button variant="outline" onClick={() => handleDialogClose(false)}>Cancel</Button>
+            <Button disabled={!newTitle.trim() || generating} onClick={handleGenerate}>
+              {generating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              <Sparkles className="w-4 h-4 mr-2" />
+              Generate with AI
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

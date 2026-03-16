@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom'
+import { Bug } from 'lucide-react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import HelpGuide from './HelpGuide'
@@ -14,6 +15,9 @@ export default function MainLayout() {
         </main>
       </div>
       <HelpGuide />
+      <button onClick={() => window.location.href = '/bug-report'} className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg hover:bg-red-700 transition" title="Report a Bug">
+        <Bug className="h-4 w-4" /> Report Bug
+      </button>
     </div>
   )
 }

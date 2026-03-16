@@ -37,12 +37,11 @@ async def generate_image(
         db,
         client_id=client_id,
         prompt=prompt,
-        image_type=image_type,
+        usage_type=image_type,
         style=style,
         width=width,
         height=height,
-        brand_colors=brand_colors,
-        text_overlay=text_overlay,
+        image_url=f"/generated/{uuid.uuid4()}.png",
     )
     return model_to_dict(image)
 

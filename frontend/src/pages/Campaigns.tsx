@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +10,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -33,18 +30,8 @@ import {
   CheckCircle2,
   DollarSign,
   TrendingUp,
-  Eye,
-  MousePointerClick,
-  Target,
-  Pause,
-  Play,
-  FileText,
   Edit,
-  Megaphone,
-  Search as SearchIcon,
-  Mail,
-  Share2,
-  Globe,
+  Trash2,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
@@ -54,6 +41,16 @@ const getHeaders = () => ({
   'Authorization': `Bearer ${localStorage.getItem('token')}`,
   'Content-Type': 'application/json',
 });
+
+function handle401(r: Response) {
+  if (r.status === 401) {
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+    return null;
+  }
+  if (!r.ok) throw new Error(`Error: ${r.status}`);
+  return r.json();
+}
 
 const CAMPAIGN_TYPES: Record<string, { label: string; color: string }> = {
   seo: { label: "SEO", color: "bg-green-100 text-green-700" },
@@ -78,19 +75,50 @@ function formatNum(n: number) {
 
 export default function Campaigns() {
   const [campaignsData, setCampaignsData] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // New Campaign dialog state
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newClient, setNewClient] = useState('');
+  const [newType, setNewType] = useState('seo');
+  const [newStartDate, setNewStartDate] = useState('');
+  const [newEndDate, setNewEndDate] = useState('');
+  const [newBudget, setNewBudget] = useState('');
+  const [newGoals, setNewGoals] = useState('');
+  const [newChannels, setNewChannels] = useState('');
+  const [createLoading, setCreateLoading] = useState(false);
+
+  const fetchCampaigns = () => {
     setLoading(true);
+    setError(null);
     fetch(`${API}/campaigns/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => handle401(r))
       .then(d => {
+        if (!d) return;
         const camps = d.campaigns || d || [];
         setCampaignsData(Array.isArray(camps) ? camps : []);
       })
-      .catch(() => setCampaignsData([]))
+      .catch((e) => { setError(e.message); setCampaignsData([]); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchCampaigns();
+    // Fetch clients for the dialog
+    fetch(`${API}/clients/`, { headers: getHeaders() })
+      .then(r => handle401(r))
+      .then(d => {
+        if (!d) return;
+        const clientList = d.clients || d || [];
+        const list = Array.isArray(clientList) ? clientList : [];
+        setClients(list);
+        if (list.length > 0) setNewClient(list[0].id);
+      })
+      .catch(() => setClients([]));
   }, []);
 
   const activeCampaigns = campaignsData.filter((c) => c.status === "active").length;
@@ -98,11 +126,138 @@ export default function Campaigns() {
   const totalBudget = campaignsData.reduce((sum, c) => sum + (c.budget || 0), 0);
   const totalSpent = campaignsData.reduce((sum, c) => sum + (c.spent || 0), 0);
 
+  const handleCreateCampaign = () => {
+    if (!newName.trim()) return;
+    setCreateLoading(true);
+    setError(null);
+    const params = new URLSearchParams({
+      name: newName,
+      campaign_type: newType,
+      status: 'draft',
+    });
+    if (newClient) params.set('client_id', newClient);
+    if (newStartDate) params.set('start_date', newStartDate);
+    if (newEndDate) params.set('end_date', newEndDate);
+    if (newBudget) params.set('budget', newBudget);
+
+    const body: any = {};
+    if (newGoals.trim()) body.goals = newGoals.split(',').map(g => g.trim()).filter(Boolean);
+    if (newChannels.trim()) body.channels = newChannels.split(',').map(ch => ch.trim()).filter(Boolean);
+
+    fetch(`${API}/campaigns/?${params.toString()}`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+    })
+      .then(r => handle401(r))
+      .then(d => {
+        if (!d) return;
+        setCreateOpen(false);
+        setNewName('');
+        setNewType('seo');
+        setNewStartDate('');
+        setNewEndDate('');
+        setNewBudget('');
+        setNewGoals('');
+        setNewChannels('');
+        fetchCampaigns();
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreateLoading(false));
+  };
+
+  const handleDeleteCampaign = (campaignId: string) => {
+    setError(null);
+    fetch(`${API}/campaigns/${campaignId}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    })
+      .then(r => handle401(r))
+      .then(() => fetchCampaigns())
+      .catch((e) => setError(e.message));
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader title="Campaign Planner">
-        <Button><Plus className="w-4 h-4 mr-2" /> New Campaign</Button>
+        <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-2" /> New Campaign</Button>
       </PageHeader>
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+          <button className="ml-2 underline" onClick={() => setError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {/* New Campaign Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Campaign</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Campaign Name</label>
+              <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Campaign name" />
+            </div>
+            {clients.length > 0 && (
+              <div>
+                <label className="text-sm font-medium mb-1 block">Client</label>
+                <Select value={newClient} onValueChange={setNewClient}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {clients.map((c: any) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <label className="text-sm font-medium mb-1 block">Type</label>
+              <Select value={newType} onValueChange={setNewType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="seo">SEO</SelectItem>
+                  <SelectItem value="content">Content</SelectItem>
+                  <SelectItem value="ads">Ads</SelectItem>
+                  <SelectItem value="social">Social</SelectItem>
+                  <SelectItem value="email">Email</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Start Date</label>
+                <Input type="date" value={newStartDate} onChange={e => setNewStartDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">End Date</label>
+                <Input type="date" value={newEndDate} onChange={e => setNewEndDate(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Budget ($)</label>
+              <Input type="number" value={newBudget} onChange={e => setNewBudget(e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Goals (comma-separated)</label>
+              <Textarea value={newGoals} onChange={e => setNewGoals(e.target.value)} placeholder="Increase traffic, Boost conversions" rows={2} />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Channels (comma-separated)</label>
+              <Input value={newChannels} onChange={e => setNewChannels(e.target.value)} placeholder="Google, Facebook, Email" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateCampaign} disabled={createLoading || !newName.trim()}>
+              {createLoading ? 'Creating...' : 'Create Campaign'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -148,9 +303,26 @@ export default function Campaigns() {
                           {campaign.startDate || campaign.start_date} &mdash; {campaign.endDate || campaign.end_date}
                         </p>
                       </div>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setExpandedId(expanded ? null : campaign.id)}>
-                        {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
+                          setNewName(campaign.name || '');
+                          setNewType(campaign.type || 'seo');
+                          setNewStartDate(campaign.startDate || campaign.start_date || '');
+                          setNewEndDate(campaign.endDate || campaign.end_date || '');
+                          setNewBudget(String(campaign.budget || ''));
+                          setNewGoals(Array.isArray(campaign.goals) ? campaign.goals.join(', ') : '');
+                          setNewChannels(Array.isArray(campaign.channels) ? campaign.channels.join(', ') : '');
+                          setCreateOpen(true);
+                        }}>
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700" onClick={() => handleDeleteCampaign(campaign.id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setExpandedId(expanded ? null : campaign.id)}>
+                          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </Button>
+                      </div>
                     </div>
 
                     <div className="mt-3 space-y-1">

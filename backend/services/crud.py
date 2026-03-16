@@ -156,17 +156,88 @@ async def update_client(db: AsyncSession, client_id: str, **kwargs) -> Optional[
 
 async def delete_client(db: AsyncSession, client_id: str) -> bool:
     client = await get_client(db, client_id)
-    if client:
-        await db.delete(client)
-        await db.flush()
-        return True
-    return False
+    if not client:
+        return False
+    # Delete all related records first (cascade)
+    from models.seo import SEOAudit, SEOMetrics, TechnicalSEOIssue
+    from models.keyword import Keyword, KeywordGroup
+    from models.backlink import Backlink, BacklinkProfile
+    from models.content import Content
+    from models.campaign import Campaign, CampaignMetrics
+    from models.social_media import SocialAccount, SocialPost, ContentCalendar
+    from models.ads import AdAccount, AdCampaign
+    from models.report import Report
+    from models.alert import Alert
+    from models.competitor import Competitor, CompetitorAnalysis
+    from models.image import GeneratedImage
+
+    # Delete in order (children first)
+    # SEO: issues -> audits, metrics
+    audits = (await db.execute(select(SEOAudit).where(SEOAudit.client_id == client_id))).scalars().all()
+    for a in audits:
+        await db.execute(delete(TechnicalSEOIssue).where(TechnicalSEOIssue.audit_id == a.id))
+    await db.execute(delete(SEOAudit).where(SEOAudit.client_id == client_id))
+    await db.execute(delete(SEOMetrics).where(SEOMetrics.client_id == client_id))
+
+    # Keywords
+    await db.execute(delete(Keyword).where(Keyword.client_id == client_id))
+    await db.execute(delete(KeywordGroup).where(KeywordGroup.client_id == client_id))
+
+    # Backlinks -> profile
+    profiles = (await db.execute(select(BacklinkProfile).where(BacklinkProfile.client_id == client_id))).scalars().all()
+    for p in profiles:
+        await db.execute(delete(Backlink).where(Backlink.profile_id == p.id))
+    await db.execute(delete(BacklinkProfile).where(BacklinkProfile.client_id == client_id))
+
+    # Content, Images
+    await db.execute(delete(Content).where(Content.client_id == client_id))
+    await db.execute(delete(GeneratedImage).where(GeneratedImage.client_id == client_id))
+
+    # Campaigns -> metrics
+    campaigns = (await db.execute(select(Campaign).where(Campaign.client_id == client_id))).scalars().all()
+    for c in campaigns:
+        await db.execute(delete(CampaignMetrics).where(CampaignMetrics.campaign_id == c.id))
+    await db.execute(delete(Campaign).where(Campaign.client_id == client_id))
+
+    # Social: posts -> accounts, calendar
+    accounts = (await db.execute(select(SocialAccount).where(SocialAccount.client_id == client_id))).scalars().all()
+    for a in accounts:
+        await db.execute(delete(SocialPost).where(SocialPost.account_id == a.id))
+    await db.execute(delete(SocialAccount).where(SocialAccount.client_id == client_id))
+    await db.execute(delete(ContentCalendar).where(ContentCalendar.client_id == client_id))
+
+    # Ads: campaigns -> accounts
+    ad_accounts = (await db.execute(select(AdAccount).where(AdAccount.client_id == client_id))).scalars().all()
+    for aa in ad_accounts:
+        ad_camps = (await db.execute(select(AdCampaign).where(AdCampaign.ad_account_id == aa.id))).scalars().all()
+        for ac in ad_camps:
+            from models.ads import AdMetrics
+            await db.execute(delete(AdMetrics).where(AdMetrics.ad_campaign_id == ac.id))
+        await db.execute(delete(AdCampaign).where(AdCampaign.ad_account_id == aa.id))
+    await db.execute(delete(AdAccount).where(AdAccount.client_id == client_id))
+
+    # Reports, Alerts
+    await db.execute(delete(Report).where(Report.client_id == client_id))
+    await db.execute(delete(Alert).where(Alert.client_id == client_id))
+
+    # Competitors -> analysis
+    comps = (await db.execute(select(Competitor).where(Competitor.client_id == client_id))).scalars().all()
+    for comp in comps:
+        await db.execute(delete(CompetitorAnalysis).where(CompetitorAnalysis.competitor_id == comp.id))
+    await db.execute(delete(Competitor).where(Competitor.client_id == client_id))
+
+    # Finally delete the client
+    await db.delete(client)
+    await db.flush()
+    return True
 
 
 # ─── SEO CRUD ───
 
 async def create_seo_audit(db: AsyncSession, client_id: str, **kwargs) -> SEOAudit:
-    audit = SEOAudit(id=uuid.uuid4(), client_id=client_id, status="running", **kwargs)
+    if "status" not in kwargs:
+        kwargs["status"] = "running"
+    audit = SEOAudit(id=uuid.uuid4(), client_id=client_id, **kwargs)
     db.add(audit)
     await db.flush()
     await db.refresh(audit)
@@ -694,7 +765,7 @@ async def delete_competitor(db: AsyncSession, competitor_id: str) -> bool:
 
 async def get_competitor_analysis(db: AsyncSession, competitor_id: str) -> Optional[CompetitorAnalysis]:
     result = await db.execute(
-        select(CompetitorAnalysis).where(CompetitorAnalysis.competitor_id == competitor_id).order_by(desc(CompetitorAnalysis.date)).limit(1)
+        select(CompetitorAnalysis).where(CompetitorAnalysis.competitor_id == competitor_id).order_by(desc(CompetitorAnalysis.created_at)).limit(1)
     )
     return result.scalar_one_or_none()
 

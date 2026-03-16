@@ -106,16 +106,15 @@ async def create_keyword_group(
 @router.post("/{client_id}/keywords/research")
 async def keyword_research(
     client_id: str,
-    seed_keywords: List[str] = Body(...),
+    seed_keywords: Optional[str] = None,
     location: str = "US",
     language: str = "en",
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """AI-powered keyword research from seed keywords."""
-    # This calls an external AI/SEO service - results come from the service, not mock data
-    # When no service is configured, return empty suggestions
-    return {"seed_keywords": seed_keywords, "suggestions": [], "total": 0}
+    seeds = seed_keywords.split(",") if seed_keywords else []
+    return {"seed_keywords": seeds, "location": location, "language": language, "suggestions": [], "total": 0}
 
 
 @router.get("/{client_id}/keywords/rankings")

@@ -5,28 +5,9 @@ import {
   Shield,
   AlertTriangle,
   Search,
-  ExternalLink,
-  ArrowUpRight,
-  ArrowDownRight,
   ChevronLeft,
   ChevronRight,
-  TrendingDown,
-  BarChart3,
-  RefreshCw,
 } from "lucide-react";
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
 
 const API = '/api/v1';
 const getHeaders = () => ({
@@ -66,7 +47,6 @@ function StatsCard({ title, value, icon: Icon, trend, trendDirection }: {
         <span className="text-2xl font-bold text-gray-900 dark:text-white">{value}</span>
         {trend && (
           <span className={`inline-flex items-center text-xs font-medium ${trendDirection === "up" ? "text-green-600" : "text-red-500"}`}>
-            {trendDirection === "up" ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
             {trend}
           </span>
         )}
@@ -98,8 +78,21 @@ function getDaBadgeVariant(da: number): "success" | "secondary" | "warning" | "d
   return "default";
 }
 
+function getPageNumbers(currentPage: number, totalPages: number): (number | '...')[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages: (number | '...')[] = [1];
+  if (currentPage > 3) pages.push('...');
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (currentPage < totalPages - 2) pages.push('...');
+  pages.push(totalPages);
+  return pages;
+}
+
 const ITEMS_PER_PAGE = 6;
-const DA_BAR_COLORS = ["#94a3b8", "#60a5fa", "#34d399", "#fbbf24", "#f97316"];
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -117,31 +110,91 @@ export default function Backlinks() {
   const [backlinksData, setBacklinksData] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAuthError = (r: Response) => {
+    if (r.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      return true;
+    }
+    return false;
+  };
 
   useEffect(() => {
     fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((err) => { setClients([]); setError(err.message); });
   }, []);
+
+  const fetchBacklinks = (clientId: string) => {
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      fetch(`${API}/backlinks/${clientId}/backlinks`, { headers: getHeaders() })
+        .then(r => {
+          if (handleAuthError(r)) return null;
+          if (!r.ok) throw new Error(`Error: ${r.status}`);
+          return r.json();
+        })
+        .catch(() => []),
+      fetch(`${API}/backlinks/${clientId}/backlinks/profile`, { headers: getHeaders() })
+        .then(r => {
+          if (handleAuthError(r)) return null;
+          if (!r.ok) throw new Error(`Error: ${r.status}`);
+          return r.json();
+        })
+        .catch(() => null),
+    ]).then(([blRes, profileRes]) => {
+      if (blRes) {
+        const bls = blRes.backlinks || blRes || [];
+        setBacklinksData(Array.isArray(bls) ? bls : []);
+      } else {
+        setBacklinksData([]);
+      }
+      setProfile(profileRes);
+    }).finally(() => setLoading(false));
+  };
 
   useEffect(() => {
     if (!selectedClient) return;
-    setLoading(true);
-    Promise.all([
-      fetch(`${API}/backlinks/${selectedClient}/backlinks`, { headers: getHeaders() }).then(r => r.json()).catch(() => []),
-      fetch(`${API}/backlinks/${selectedClient}/backlinks/profile`, { headers: getHeaders() }).then(r => r.json()).catch(() => null),
-    ]).then(([blRes, profileRes]) => {
-      const bls = blRes.backlinks || blRes || [];
-      setBacklinksData(Array.isArray(bls) ? bls : []);
-      setProfile(profileRes);
-    }).finally(() => setLoading(false));
+    setBacklinksData([]);
+    setProfile(null);
+    setCurrentPage(1);
+    fetchBacklinks(selectedClient);
   }, [selectedClient]);
+
+  const handleAnalyzeDomain = () => {
+    if (!selectedClient) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${API}/backlinks/${selectedClient}/backlinks/analyze`, {
+      method: 'POST',
+      headers: getHeaders(),
+    })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (!d) return;
+        alert('Domain analysis started successfully!');
+        fetchBacklinks(selectedClient);
+      })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  };
 
   const filteredBacklinks = useMemo(() => {
     return backlinksData.filter((bl: any) => {
@@ -170,6 +223,9 @@ export default function Backlinks() {
     setCurrentPage(1);
   }, [searchQuery, statusFilter, relFilter, minDa]);
 
+  const showingStart = filteredBacklinks.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const showingEnd = Math.min(currentPage * ITEMS_PER_PAGE, filteredBacklinks.length);
+
   if (clients.length === 0 && !loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 lg:p-8">
@@ -193,11 +249,21 @@ export default function Backlinks() {
             {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         )}
-        <button className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow hover:bg-indigo-700 transition-colors">
+        <button
+          onClick={handleAnalyzeDomain}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow hover:bg-indigo-700 transition-colors"
+        >
           <Search className="h-4 w-4" />
           Analyze Domain
         </button>
       </PageHeader>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -280,14 +346,20 @@ export default function Backlinks() {
                 <tbody>
                   {paginatedBacklinks.map((bl: any, idx: number) => {
                     const da = bl.domainAuthority || bl.domain_authority || 0;
+                    const sourceUrl = bl.sourceUrl || bl.source_url || "";
+                    const targetUrl = bl.targetUrl || bl.target_url || "";
                     return (
                       <tr key={bl.id || idx} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
                         <td className="px-4 py-3">
-                          <span className="text-indigo-600 dark:text-indigo-400 max-w-[200px] truncate block">
-                            {(bl.sourceUrl || bl.source_url || "").replace("https://", "")}
-                          </span>
+                          <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline max-w-[200px] truncate block">
+                            {sourceUrl.replace("https://", "")}
+                          </a>
                         </td>
-                        <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[120px] truncate">{bl.targetUrl || bl.target_url}</td>
+                        <td className="px-4 py-3 max-w-[120px] truncate">
+                          <a href={targetUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                            {targetUrl}
+                          </a>
+                        </td>
                         <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[150px] truncate">{bl.anchorText || bl.anchor_text}</td>
                         <td className="px-4 py-3 text-center">
                           <Badge variant={getDaBadgeVariant(da)}>{da}</Badge>
@@ -319,7 +391,7 @@ export default function Backlinks() {
             {/* Pagination */}
             <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                Showing {Math.min((currentPage - 1) * ITEMS_PER_PAGE + 1, filteredBacklinks.length)}-{Math.min(currentPage * ITEMS_PER_PAGE, filteredBacklinks.length)} of {filteredBacklinks.length}
+                Showing {showingStart}-{showingEnd} of {filteredBacklinks.length}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -329,18 +401,22 @@ export default function Backlinks() {
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                      page === currentPage
-                        ? "bg-indigo-600 text-white"
-                        : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
-                    }`}
-                  >
-                    {page}
-                  </button>
+                {getPageNumbers(currentPage, totalPages).map((page, idx) => (
+                  page === '...' ? (
+                    <span key={`ellipsis-${idx}`} className="px-2 py-1.5 text-sm text-gray-400">...</span>
+                  ) : (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                        page === currentPage
+                          ? "bg-indigo-600 text-white"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  )
                 ))}
                 <button
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   AreaChart,
   Area,
@@ -26,6 +26,7 @@ import {
   Activity,
   Target,
   BarChart3,
+  RefreshCw,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,7 @@ interface DashboardData {
   total_keywords: number
   total_backlinks: number
   active_campaigns: number
+  content_count?: number
   traffic_data?: { month: string; organic: number; paid: number }[]
   keyword_distribution?: { range: string; count: number; fill: string }[]
   recent_activity?: { id: number; message: string; type: string; time: string }[]
@@ -128,8 +130,8 @@ function EmptyState({ message }: { message: string }) {
 interface StatCardProps {
   title: string
   value: string
-  change: string
-  trend: 'up' | 'down'
+  change?: string
+  trend?: 'up' | 'down'
   icon: React.ElementType
   color: string
 }
@@ -146,15 +148,17 @@ function StatsCard({ title, value, change, trend, icon: Icon, color }: StatCardP
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      <div className="mt-3 flex items-center text-sm">
-        {trend === 'up' ? (
-          <ArrowUpRight className="mr-1 h-4 w-4 text-emerald-500" />
-        ) : (
-          <ArrowDownRight className="mr-1 h-4 w-4 text-rose-500" />
-        )}
-        <span className={trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}>{change}</span>
-        <span className="ml-1 text-gray-400">vs last month</span>
-      </div>
+      {change && trend && (
+        <div className="mt-3 flex items-center text-sm">
+          {trend === 'up' ? (
+            <ArrowUpRight className="mr-1 h-4 w-4 text-emerald-500" />
+          ) : (
+            <ArrowDownRight className="mr-1 h-4 w-4 text-rose-500" />
+          )}
+          <span className={trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}>{change}</span>
+          <span className="ml-1 text-gray-400">vs last month</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -188,119 +192,125 @@ export default function Dashboard() {
   const [clients, setClients] = useState<ClientInfo[]>([])
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const fetchData = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) setRefreshing(true)
+      else setLoading(true)
+      setError(null)
+
+      // 1. Fetch clients list
+      const clientsRes = await fetch(`${API}/clients/`, { headers: getHeaders() })
+      if (clientsRes.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+      if (!clientsRes.ok) throw new Error(`Error: ${clientsRes.status}`)
+      const clientsJson = await clientsRes.json()
+      const clientsList: ClientInfo[] = clientsJson.clients || []
+      setClients(clientsList)
+
+      // 2. If we have clients, fetch dashboard data for each and aggregate
+      if (clientsList.length > 0) {
+        const dashboardResults = await Promise.allSettled(
+          clientsList.map((c) =>
+            fetch(`${API}/clients/${c.id}/dashboard`, { headers: getHeaders() }).then((r) => {
+              if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+              if (!r.ok) throw new Error(`Error: ${r.status}`)
+              return r.json()
+            })
+          )
+        )
+
+        const fulfilled = dashboardResults
+          .filter((r): r is PromiseFulfilledResult<DashboardData> => r.status === 'fulfilled' && r.value != null)
+          .map((r) => r.value)
+
+        // Aggregate stats
+        const totalSeoScore =
+          fulfilled.length > 0
+            ? fulfilled.reduce((sum, d) => sum + (d.seo_score || 0), 0) / fulfilled.length
+            : 0
+        const totalKeywords = fulfilled.reduce((sum, d) => sum + (d.total_keywords || 0), 0)
+        const totalBacklinks = fulfilled.reduce((sum, d) => sum + (d.total_backlinks || 0), 0)
+        const totalActiveCampaigns = fulfilled.reduce(
+          (sum, d) => sum + (d.active_campaigns || 0),
+          0
+        )
+        const totalContentCount = fulfilled.reduce(
+          (sum, d) => sum + (d.content_count || 0),
+          0
+        )
+
+        // Merge array data from all clients
+        const allTraffic = fulfilled.flatMap((d) => d.traffic_data || [])
+        const allKeywordDist = fulfilled.flatMap((d) => d.keyword_distribution || [])
+        const allActivity = fulfilled.flatMap((d) => d.recent_activity || [])
+        const allTopKeywords = fulfilled.flatMap((d) => d.top_keywords || [])
+        const allCampaigns = fulfilled.flatMap((d) => d.campaigns || [])
+        const allAlerts = fulfilled.flatMap((d) => d.alerts || [])
+
+        setDashboardData({
+          seo_score: totalSeoScore,
+          total_keywords: totalKeywords,
+          total_backlinks: totalBacklinks,
+          active_campaigns: totalActiveCampaigns,
+          content_count: totalContentCount,
+          traffic_data: allTraffic,
+          keyword_distribution: allKeywordDist,
+          recent_activity: allActivity,
+          top_keywords: allTopKeywords,
+          campaigns: allCampaigns,
+          alerts: allAlerts,
+        })
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch dashboard data:', err)
+      setError(err.message || 'Failed to load dashboard data. Please try again.')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }, [])
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // 1. Fetch clients list
-        const clientsRes = await fetch(`${API}/clients/`, { headers: getHeaders() })
-        const clientsJson = await clientsRes.json()
-        const clientsList: ClientInfo[] = clientsJson.clients || []
-        setClients(clientsList)
-
-        // 2. If we have clients, fetch dashboard data for each and aggregate
-        if (clientsList.length > 0) {
-          const dashboardResults = await Promise.allSettled(
-            clientsList.map((c) =>
-              fetch(`${API}/clients/${c.id}/dashboard`, { headers: getHeaders() }).then((r) =>
-                r.json()
-              )
-            )
-          )
-
-          const fulfilled = dashboardResults
-            .filter((r): r is PromiseFulfilledResult<DashboardData> => r.status === 'fulfilled')
-            .map((r) => r.value)
-
-          // Aggregate stats
-          const totalSeoScore =
-            fulfilled.length > 0
-              ? fulfilled.reduce((sum, d) => sum + (d.seo_score || 0), 0) / fulfilled.length
-              : 0
-          const totalKeywords = fulfilled.reduce((sum, d) => sum + (d.total_keywords || 0), 0)
-          const totalBacklinks = fulfilled.reduce((sum, d) => sum + (d.total_backlinks || 0), 0)
-          const totalActiveCampaigns = fulfilled.reduce(
-            (sum, d) => sum + (d.active_campaigns || 0),
-            0
-          )
-
-          // Merge array data from all clients
-          const allTraffic = fulfilled.flatMap((d) => d.traffic_data || [])
-          const allKeywordDist = fulfilled.flatMap((d) => d.keyword_distribution || [])
-          const allActivity = fulfilled.flatMap((d) => d.recent_activity || [])
-          const allTopKeywords = fulfilled.flatMap((d) => d.top_keywords || [])
-          const allCampaigns = fulfilled.flatMap((d) => d.campaigns || [])
-          const allAlerts = fulfilled.flatMap((d) => d.alerts || [])
-
-          setDashboardData({
-            seo_score: totalSeoScore,
-            total_keywords: totalKeywords,
-            total_backlinks: totalBacklinks,
-            active_campaigns: totalActiveCampaigns,
-            traffic_data: allTraffic,
-            keyword_distribution: allKeywordDist,
-            recent_activity: allActivity,
-            top_keywords: allTopKeywords,
-            campaigns: allCampaigns,
-            alerts: allAlerts,
-          })
-        }
-      } catch (err) {
-        console.error('Failed to fetch dashboard data:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
     fetchData()
-  }, [])
+  }, [fetchData])
 
   // Computed stats cards
   const statsCards: StatCardProps[] = [
     {
       title: 'Total Clients',
       value: clients.length.toLocaleString(),
-      change: '--',
-      trend: 'up',
       icon: Users,
       color: 'bg-blue-500',
     },
     {
       title: 'Avg SEO Score',
       value: dashboardData ? dashboardData.seo_score.toFixed(1) : '0',
-      change: '--',
-      trend: 'up',
       icon: Target,
       color: 'bg-emerald-500',
     },
     {
       title: 'Total Keywords Tracked',
       value: (dashboardData?.total_keywords || 0).toLocaleString(),
-      change: '--',
-      trend: 'up',
       icon: Search,
       color: 'bg-violet-500',
     },
     {
       title: 'Total Backlinks',
       value: (dashboardData?.total_backlinks || 0).toLocaleString(),
-      change: '--',
-      trend: 'up',
       icon: Link2,
       color: 'bg-amber-500',
     },
     {
       title: 'Active Campaigns',
       value: (dashboardData?.active_campaigns || 0).toLocaleString(),
-      change: '--',
-      trend: 'up',
       icon: Rocket,
       color: 'bg-rose-500',
     },
     {
       title: 'AI Content Generated',
-      value: '0',
-      change: '--',
-      trend: 'up',
+      value: (dashboardData?.content_count || 0).toLocaleString(),
       icon: FileText,
       color: 'bg-cyan-500',
     },
@@ -347,6 +357,31 @@ export default function Dashboard() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+          </div>
+          <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-16 shadow-sm dark:border-red-800 dark:bg-red-900/20">
+            <AlertTriangle className="mb-4 h-12 w-12 text-red-400" />
+            <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">
+              Failed to load dashboard
+            </h2>
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <button
+              onClick={() => fetchData()}
+              className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (clients.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -375,11 +410,21 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Page Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-          <p className="mt-1 text-gray-500 dark:text-gray-400">
-            Welcome back! Here&apos;s what&apos;s happening across your clients.
-          </p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+            <p className="mt-1 text-gray-500 dark:text-gray-400">
+              Welcome back! Here&apos;s what&apos;s happening across your clients.
+            </p>
+          </div>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
         </div>
 
         {/* Stats Cards */}

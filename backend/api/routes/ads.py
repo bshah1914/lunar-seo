@@ -66,12 +66,12 @@ async def list_ad_campaigns(
 @router.post("/{client_id}/campaigns", status_code=status.HTTP_201_CREATED)
 async def create_ad_campaign(
     client_id: str,
-    name: str,
-    platform: str,
-    budget_daily: float,
-    budget_total: float,
-    start_date: str,
-    end_date: str,
+    name: str = "New Campaign",
+    platform: str = "google",
+    budget_daily: float = 0,
+    budget_total: float = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -79,9 +79,9 @@ async def create_ad_campaign(
     campaign = await crud.create_ad_campaign(
         db,
         client_id=client_id,
-        name=name,
         platform=platform,
-        budget_amount=budget_total,
+        name=name,
+        budget_amount=budget_total or budget_daily,
         start_date=start_date,
         end_date=end_date,
     )

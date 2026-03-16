@@ -5,14 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Key, Plus, Search, ArrowUp, ArrowDown, Minus, TrendingUp } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts'
+import { Key, Plus, Search, ArrowUp, ArrowDown, Minus, TrendingUp, Trash2, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 
 const API = '/api/v1';
 const getHeaders = () => ({
   'Authorization': `Bearer ${localStorage.getItem('token')}`,
   'Content-Type': 'application/json',
 });
+
+const ITEMS_PER_PAGE = 20;
 
 function DifficultyBar({ value }: { value: number }) {
   const color = value < 30 ? 'bg-green-500' : value < 60 ? 'bg-yellow-500' : 'bg-red-500'
@@ -39,31 +41,111 @@ export default function Keywords() {
   const [selectedClient, setSelectedClient] = useState<string>('')
   const [keywords, setKeywords] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [newKeywordsText, setNewKeywordsText] = useState('')
+  const [addingKeywords, setAddingKeywords] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+
+  const handleAuthError = (r: Response) => {
+    if (r.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      return true;
+    }
+    return false;
+  };
 
   useEffect(() => {
     fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
         if (list.length > 0) setSelectedClient(list[0].id);
       })
-      .catch(() => setClients([]));
+      .catch((err) => { setClients([]); setError(err.message); });
   }, []);
 
-  useEffect(() => {
-    if (!selectedClient) return;
+  const fetchKeywords = (clientId: string) => {
     setLoading(true);
-    fetch(`${API}/keywords/${selectedClient}/keywords`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError(null);
+    fetch(`${API}/keywords/${clientId}/keywords`, { headers: getHeaders() })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const kwList = d.keywords || d || [];
         setKeywords(Array.isArray(kwList) ? kwList : []);
       })
-      .catch(() => setKeywords([]))
+      .catch((err) => { setKeywords([]); setError(err.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    setKeywords([]);
+    setCurrentPage(1);
+    fetchKeywords(selectedClient);
   }, [selectedClient]);
+
+  const handleAddKeywords = () => {
+    if (!selectedClient || !newKeywordsText.trim()) return;
+    const keywordLines = newKeywordsText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+    if (keywordLines.length === 0) return;
+    setAddingKeywords(true);
+    setError(null);
+    fetch(`${API}/keywords/${selectedClient}/keywords`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(keywordLines),
+    })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (!d) return;
+        setShowAddDialog(false);
+        setNewKeywordsText('');
+        fetchKeywords(selectedClient);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setAddingKeywords(false));
+  };
+
+  const handleDeleteKeyword = (keywordId: string) => {
+    if (!selectedClient) return;
+    setError(null);
+    fetch(`${API}/keywords/${selectedClient}/keywords/${keywordId}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    })
+      .then(r => {
+        if (handleAuthError(r)) return null;
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (d === null) return;
+        fetchKeywords(selectedClient);
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleResearch = () => {
+    alert('Coming soon - requires OpenAI API key');
+  };
 
   if (clients.length === 0 && !loading) {
     return (
@@ -82,6 +164,9 @@ export default function Keywords() {
   const inTop10 = keywords.filter((k: any) => k.position <= 10).length
   const improved = keywords.filter((k: any) => k.position < (k.prevPosition || k.previous_position || k.position)).length
   const avgPosition = keywords.length > 0 ? (keywords.reduce((sum: number, k: any) => sum + (k.position || 0), 0) / keywords.length).toFixed(1) : '0'
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const paginatedFiltered = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   const distributionData = [
     { range: '1-3', count: keywords.filter((k: any) => k.position >= 1 && k.position <= 3).length, color: '#22c55e' },
@@ -103,11 +188,42 @@ export default function Keywords() {
                 {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             )}
-            <Button variant="outline"><Search className="h-4 w-4 mr-2" /> Research</Button>
-            <Button><Plus className="h-4 w-4 mr-2" /> Add Keywords</Button>
+            <Button variant="outline" onClick={handleResearch}><Search className="h-4 w-4 mr-2" /> Research</Button>
+            <Button onClick={() => setShowAddDialog(true)}><Plus className="h-4 w-4 mr-2" /> Add Keywords</Button>
           </div>
         }
       />
+
+      {error && (
+        <div className="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
+        </div>
+      )}
+
+      {showAddDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Add Keywords</h3>
+              <button onClick={() => setShowAddDialog(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-3">Enter one keyword per line:</p>
+            <textarea
+              className="w-full h-40 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+              placeholder={"best running shoes\nrunning shoes for men\naffordable sneakers"}
+              value={newKeywordsText}
+              onChange={e => setNewKeywordsText(e.target.value)}
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+              <Button onClick={handleAddKeywords} disabled={addingKeywords}>
+                {addingKeywords ? 'Adding...' : 'Add Keywords'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -127,9 +243,9 @@ export default function Keywords() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <StatsCard title="Total Keywords" value={keywords.length} icon={<Key className="h-5 w-5" />} />
-            <StatsCard title="Avg Position" value={avgPosition} change={-8.5} trend="up" changeLabel="vs last month" />
-            <StatsCard title="In Top 10" value={inTop10} change={15.2} trend="up" />
-            <StatsCard title="Improved" value={improved} icon={<TrendingUp className="h-5 w-5" />} change={12} trend="up" />
+            <StatsCard title="Avg Position" value={avgPosition} />
+            <StatsCard title="In Top 10" value={inTop10} />
+            <StatsCard title="Improved" value={improved} icon={<TrendingUp className="h-5 w-5" />} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -164,7 +280,7 @@ export default function Keywords() {
                 <CardTitle>Tracked Keywords</CardTitle>
                 <div className="relative w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search keywords..." className="pl-9" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                  <Input placeholder="Search keywords..." className="pl-9" value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} />
                 </div>
               </div>
             </CardHeader>
@@ -181,10 +297,11 @@ export default function Keywords() {
                       <th className="text-right py-3 px-2 font-medium text-muted-foreground">CPC</th>
                       <th className="text-left py-3 px-2 font-medium text-muted-foreground">SERP Features</th>
                       <th className="text-left py-3 px-2 font-medium text-muted-foreground">URL</th>
+                      <th className="text-center py-3 px-2 font-medium text-muted-foreground">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((kw: any) => (
+                    {paginatedFiltered.map((kw: any) => (
                       <tr key={kw.id || kw.keyword} className="border-b hover:bg-muted/50 transition-colors">
                         <td className="py-3 px-2 font-medium">{kw.keyword}</td>
                         <td className="py-3 px-2 text-center">
@@ -204,11 +321,57 @@ export default function Keywords() {
                           </div>
                         </td>
                         <td className="py-3 px-2 text-xs text-muted-foreground max-w-[150px] truncate">{kw.url}</td>
+                        <td className="py-3 px-2 text-center">
+                          <button
+                            onClick={() => handleDeleteKeyword(kw.id)}
+                            className="text-gray-400 hover:text-red-600 transition-colors"
+                            title="Delete keyword"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <span className="text-sm text-muted-foreground">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, filtered.length)} of {filtered.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                      <Button
+                        key={page}
+                        variant={page === currentPage ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setCurrentPage(page)}
+                      >
+                        {page}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>

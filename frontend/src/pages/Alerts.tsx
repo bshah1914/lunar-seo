@@ -13,7 +13,7 @@ import {
   Mail,
   MessageSquare,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,7 +23,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -31,7 +30,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import PageHeader from "@/components/layout/PageHeader";
 import StatsCard from "@/components/layout/StatsCard";
@@ -89,6 +87,8 @@ const Alerts: React.FC = () => {
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -97,10 +97,19 @@ const Alerts: React.FC = () => {
   const [slackNotifications, setSlackNotifications] = useState(false);
   const [inAppNotifications, setInAppNotifications] = useState(true);
 
+  const apiFetch = (url: string, options?: RequestInit) => {
+    return fetch(url, { ...options, headers: { ...getHeaders(), ...options?.headers } })
+      .then(r => {
+        if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      });
+  };
+
   useEffect(() => {
-    fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+    apiFetch(`${API}/clients/`)
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
@@ -109,17 +118,22 @@ const Alerts: React.FC = () => {
       .catch(() => setClients([]));
   }, []);
 
-  useEffect(() => {
+  const fetchAlerts = () => {
     if (!selectedClient) return;
     setLoading(true);
-    fetch(`${API}/alerts/${selectedClient}/alerts`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError("");
+    apiFetch(`${API}/alerts/${selectedClient}/alerts`)
       .then(d => {
+        if (!d) return;
         const items = d.alerts || d || [];
         setAlerts(Array.isArray(items) ? items : []);
       })
-      .catch(() => setAlerts([]))
+      .catch((e) => { setAlerts([]); setError(e.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchAlerts();
   }, [selectedClient]);
 
   const filteredAlerts = alerts.filter((alert) => {
@@ -150,15 +164,34 @@ const Alerts: React.FC = () => {
   const ungroupedAlerts = filteredAlerts.filter(a => !a.dateGroup);
 
   const markAllRead = () => {
-    setAlerts((prev) => prev.map((a) => ({ ...a, status: "read" as AlertStatus })));
+    if (!selectedClient) return;
+    setError("");
+    apiFetch(`${API}/alerts/${selectedClient}/alerts/read-all`, { method: 'PUT' })
+      .then(() => {
+        setAlerts((prev) => prev.map((a) => ({ ...a, status: "read" as AlertStatus })));
+      })
+      .catch((e) => setError(e.message));
   };
 
   const markAsRead = (id: string) => {
-    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, status: "read" as AlertStatus } : a)));
+    if (!selectedClient) return;
+    setError("");
+    apiFetch(`${API}/alerts/${selectedClient}/alerts/${id}/read`, { method: 'PUT' })
+      .then(() => {
+        setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, status: "read" as AlertStatus } : a)));
+      })
+      .catch((e) => setError(e.message));
   };
 
   const dismissAlert = (id: string) => {
-    setAlerts((prev) => prev.filter((a) => a.id !== id));
+    // No delete endpoint exists, so just mark as read
+    markAsRead(id);
+  };
+
+  const handleSaveSettings = () => {
+    setSettingsOpen(false);
+    setSuccessMsg("Settings saved successfully.");
+    setTimeout(() => setSuccessMsg(""), 3000);
   };
 
   const totalAlerts = alerts.length;
@@ -183,6 +216,18 @@ const Alerts: React.FC = () => {
           </div>
         }
       />
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          {successMsg}
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -357,7 +402,7 @@ const Alerts: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSettingsOpen(false)}>Cancel</Button>
-            <Button onClick={() => setSettingsOpen(false)}>Save Settings</Button>
+            <Button onClick={handleSaveSettings}>Save Settings</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

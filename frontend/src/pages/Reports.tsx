@@ -2,14 +2,12 @@ import React, { useState, useEffect } from "react";
 import {
   FileBarChart,
   Download,
-  Send,
   Eye,
   Trash2,
   Plus,
   Calendar,
   TrendingUp,
   Search,
-  ArrowLeft,
   Loader2,
   Clock,
   Mail,
@@ -30,7 +28,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,7 +39,6 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PageHeader from "@/components/layout/PageHeader";
-import StatsCard from "@/components/layout/StatsCard";
 
 const API = '/api/v1';
 const getHeaders = () => ({
@@ -61,6 +57,7 @@ interface Report {
   dateRange: string;
   generatedDate: string;
   status: ReportStatus;
+  data?: any;
 }
 
 const TYPE_STYLES: Record<string, { color: string; bg: string; icon: React.ReactNode }> = {
@@ -81,34 +78,86 @@ const Reports: React.FC = () => {
   const [activeTab, setActiveTab] = useState("all");
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
 
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
 
+  // Generate Report dialog state
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [genClientId, setGenClientId] = useState<string>('');
+  const [genReportType, setGenReportType] = useState<string>('seo');
+  const [genDateStart, setGenDateStart] = useState('');
+  const [genDateEnd, setGenDateEnd] = useState('');
+  const [generating, setGenerating] = useState(false);
+
+  const apiFetch = (url: string, options?: RequestInit) => {
+    return fetch(url, { ...options, headers: { ...getHeaders(), ...options?.headers } })
+      .then(r => {
+        if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`Error: ${r.status}`);
+        return r.json();
+      });
+  };
+
   useEffect(() => {
-    fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+    apiFetch(`${API}/clients/`)
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         const list = Array.isArray(clientList) ? clientList : [];
         setClients(list);
-        if (list.length > 0) setSelectedClient(list[0].id);
+        if (list.length > 0) {
+          setSelectedClient(list[0].id);
+          setGenClientId(list[0].id);
+        }
       })
       .catch(() => setClients([]));
   }, []);
 
-  useEffect(() => {
+  const fetchReports = () => {
     if (!selectedClient) return;
     setLoading(true);
-    fetch(`${API}/reports/${selectedClient}/reports`, { headers: getHeaders() })
-      .then(r => r.json())
+    setError("");
+    apiFetch(`${API}/reports/${selectedClient}/reports`)
       .then(d => {
+        if (!d) return;
         const reps = d.reports || d || [];
         setReports(Array.isArray(reps) ? reps : []);
       })
-      .catch(() => setReports([]))
+      .catch((e) => { setReports([]); setError(e.message); })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchReports();
   }, [selectedClient]);
+
+  const handleGenerateReport = () => {
+    const clientId = genClientId || selectedClient;
+    if (!clientId) return;
+    setGenerating(true);
+    setError("");
+    const params = new URLSearchParams({ report_type: genReportType });
+    if (genDateStart) params.set('date_range_start', genDateStart);
+    if (genDateEnd) params.set('date_range_end', genDateEnd);
+    apiFetch(`${API}/reports/${clientId}/reports/generate?${params.toString()}`, { method: 'POST' })
+      .then(() => {
+        setGenerateOpen(false);
+        fetchReports();
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setGenerating(false));
+  };
+
+  const handleDelete = (reportId: string) => {
+    if (!selectedClient) return;
+    setError("");
+    apiFetch(`${API}/reports/${selectedClient}/reports/${reportId}`, { method: 'DELETE' })
+      .then(() => fetchReports())
+      .catch((e) => setError(e.message));
+  };
 
   const filteredReports = activeTab === "all"
     ? reports
@@ -126,10 +175,18 @@ const Reports: React.FC = () => {
                 {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             )}
-            <Button><Plus className="mr-2 h-4 w-4" /> Generate Report</Button>
+            <Button onClick={() => { setGenClientId(selectedClient); setGenerateOpen(true); }}>
+              <Plus className="mr-2 h-4 w-4" /> Generate Report
+            </Button>
           </div>
         }
       />
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16">
@@ -162,6 +219,7 @@ const Reports: React.FC = () => {
                 {filteredReports.map((report) => {
                   const typeStyle = TYPE_STYLES[report.type] || TYPE_STYLES.SEO;
                   const statusStyle = STATUS_STYLES[report.status] || STATUS_STYLES.ready;
+                  const isExpanded = expandedReportId === report.id;
 
                   return (
                     <Card key={report.id} className="flex flex-col">
@@ -188,19 +246,35 @@ const Reports: React.FC = () => {
                           <Clock className="h-3.5 w-3.5" />
                           <span>Generated {report.generatedDate}</span>
                         </div>
+                        {isExpanded && report.data && (
+                          <div className="mt-3 rounded-lg border bg-gray-50 p-3 text-xs text-gray-700 overflow-auto max-h-60">
+                            <pre className="whitespace-pre-wrap">{JSON.stringify(report.data, null, 2)}</pre>
+                          </div>
+                        )}
                       </CardContent>
                       <CardFooter className="border-t pt-3">
                         <div className="flex w-full gap-1">
-                          <Button variant="ghost" size="sm" className="flex-1" disabled={report.status === "generating"}>
+                          <Button
+                            variant="ghost" size="sm" className="flex-1"
+                            disabled={report.status === "generating"}
+                            onClick={() => setExpandedReportId(isExpanded ? null : report.id)}
+                          >
                             <Eye className="mr-1 h-3.5 w-3.5" /> View
                           </Button>
-                          <Button variant="ghost" size="sm" className="flex-1" disabled={report.status === "generating"}>
+                          <Button
+                            variant="ghost" size="sm" className="flex-1"
+                            disabled={report.status === "generating"}
+                            onClick={() => alert("PDF download coming soon")}
+                          >
                             <Download className="mr-1 h-3.5 w-3.5" /> PDF
                           </Button>
                           <Button variant="ghost" size="sm" className="flex-1" disabled={report.status === "generating"}>
                             <Mail className="mr-1 h-3.5 w-3.5" /> Send
                           </Button>
-                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700">
+                          <Button
+                            variant="ghost" size="sm" className="text-red-500 hover:text-red-700"
+                            onClick={() => handleDelete(report.id)}
+                          >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -213,6 +287,58 @@ const Reports: React.FC = () => {
           </Tabs>
         </>
       )}
+
+      {/* Generate Report Dialog */}
+      <Dialog open={generateOpen} onOpenChange={setGenerateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generate Report</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Client</label>
+              <Select value={genClientId} onValueChange={setGenClientId}>
+                <SelectTrigger><SelectValue placeholder="Select Client" /></SelectTrigger>
+                <SelectContent>
+                  {clients.map((c: any) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Report Type</label>
+              <Select value={genReportType} onValueChange={setGenReportType}>
+                <SelectTrigger><SelectValue placeholder="Select Type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="seo">SEO</SelectItem>
+                  <SelectItem value="ads">Ads</SelectItem>
+                  <SelectItem value="content">Content</SelectItem>
+                  <SelectItem value="competitor">Competitor</SelectItem>
+                  <SelectItem value="comprehensive">Comprehensive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Start Date</label>
+                <Input type="date" value={genDateStart} onChange={e => setGenDateStart(e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">End Date</label>
+                <Input type="date" value={genDateEnd} onChange={e => setGenDateEnd(e.target.value)} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGenerateOpen(false)}>Cancel</Button>
+            <Button onClick={handleGenerateReport} disabled={generating || !genClientId}>
+              {generating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Generate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

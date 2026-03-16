@@ -47,9 +47,10 @@ async def generate_report(
     report = await crud.create_report(
         db,
         client_id=client_id,
+        title=f"{report_type.title()} Report",
         report_type=report_type,
-        date_range_start=date_range_start,
-        date_range_end=date_range_end,
+        date_range_start=datetime.fromisoformat(date_range_start) if date_range_start else None,
+        date_range_end=datetime.fromisoformat(date_range_end) if date_range_end else None,
     )
     data = model_to_dict(report)
     return {

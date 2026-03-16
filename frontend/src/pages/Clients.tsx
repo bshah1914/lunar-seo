@@ -10,8 +10,8 @@ import {
   TrendingUp,
   Target,
   Rocket,
-  MoreVertical,
   Users,
+  AlertTriangle,
 } from 'lucide-react'
 
 const API = '/api/v1';
@@ -35,9 +35,13 @@ interface Client {
   status: ClientStatus
   avatar: string
   seoScore: number
+  seo_score?: number
   keywordsTracked: number
+  keywords_tracked?: number
   activeCampaigns: number
+  active_campaigns?: number
   organicTraffic: string
+  organic_traffic?: string
 }
 
 const industries: Industry[] = ['Technology', 'E-commerce', 'Healthcare', 'Finance', 'Sustainability', 'SaaS']
@@ -86,17 +90,142 @@ export default function Clients() {
   const [filterIndustry, setFilterIndustry] = useState<Industry | 'all'>('all')
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newClient, setNewClient] = useState({ name: '', domain: '', industry: 'Technology', marketing_goals: '' })
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [editingClient, setEditingClient] = useState<Client | null>(null)
+  const [editData, setEditData] = useState({ name: '', domain: '', industry: 'Technology', marketing_goals: '' })
+  const [editError, setEditError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [auditMessage, setAuditMessage] = useState<string | null>(null)
 
-  useEffect(() => {
+  const fetchClients = () => {
     setLoading(true)
+    setError(null)
     fetch(`${API}/clients/`, { headers: getHeaders() })
-      .then(r => r.json())
+      .then(r => {
+        if (r.status === 401) { localStorage.removeItem('token'); window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`Error: ${r.status}`)
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const clientList = d.clients || d || [];
         setClients(Array.isArray(clientList) ? clientList : []);
       })
-      .catch(() => setClients([]))
+      .catch((err) => {
+        setClients([])
+        setError(err.message || 'Failed to load clients.')
+      })
       .finally(() => setLoading(false));
+  }
+
+  const [createError, setCreateError] = useState('')
+
+  const handleCreateClient = async () => {
+    if (!newClient.name || !newClient.domain) return
+    setCreating(true)
+    setCreateError('')
+    try {
+      const params = new URLSearchParams({
+        name: newClient.name,
+        domain: newClient.domain,
+        industry: newClient.industry,
+        marketing_goals: newClient.marketing_goals,
+      })
+      const res = await fetch(`${API}/clients/?${params}`, { method: 'POST', headers: getHeaders() })
+      if (res.ok) {
+        setShowAddDialog(false)
+        setNewClient({ name: '', domain: '', industry: 'Technology', marketing_goals: '' })
+        fetchClients()
+      } else if (res.status === 401) {
+        localStorage.removeItem('token')
+        setCreateError('Session expired. Please login again.')
+        window.location.href = '/login'
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setCreateError(err.detail || `Error: ${res.status}`)
+      }
+    } catch (err: any) {
+      setCreateError(err.message || 'Network error. Please try again.')
+    }
+    finally { setCreating(false) }
+  }
+
+  const handleEditClient = async () => {
+    if (!editingClient || !editData.name || !editData.domain) return
+    setSaving(true)
+    setEditError('')
+    try {
+      const res = await fetch(`${API}/clients/${editingClient.id}`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          name: editData.name,
+          domain: editData.domain,
+          industry: editData.industry,
+          marketing_goals: editData.marketing_goals,
+        }),
+      })
+      if (res.ok) {
+        setShowEditDialog(false)
+        setEditingClient(null)
+        fetchClients()
+      } else if (res.status === 401) {
+        localStorage.removeItem('token')
+        setEditError('Session expired. Please login again.')
+        window.location.href = '/login'
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setEditError(err.detail || `Error: ${res.status}`)
+      }
+    } catch (err: any) {
+      setEditError(err.message || 'Network error. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAudit = async (clientId: string) => {
+    setAuditMessage(null)
+    try {
+      const res = await fetch(`${API}/seo/${clientId}/audit`, {
+        method: 'POST',
+        headers: getHeaders(),
+      })
+      if (res.status === 401) {
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+        return
+      }
+      if (res.ok) {
+        setAuditMessage('Audit started successfully!')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setAuditMessage(err.detail || `Audit failed: ${res.status}`)
+      }
+    } catch (err: any) {
+      setAuditMessage(err.message || 'Failed to start audit.')
+    }
+    setTimeout(() => setAuditMessage(null), 4000)
+  }
+
+  const openEditDialog = (client: Client) => {
+    setEditingClient(client)
+    setEditData({
+      name: client.name || '',
+      domain: client.domain || '',
+      industry: client.industry || 'Technology',
+      marketing_goals: '',
+    })
+    setEditError('')
+    setShowEditDialog(true)
+  }
+
+  useEffect(() => {
+    fetchClients();
   }, [])
 
   const filtered = clients.filter((c) => {
@@ -110,6 +239,13 @@ export default function Clients() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Audit toast message */}
+        {auditMessage && (
+          <div className="fixed top-4 right-4 z-50 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 shadow-lg dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
+            {auditMessage}
+          </div>
+        )}
+
         {/* Page Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -118,11 +254,87 @@ export default function Clients() {
               Manage and monitor all your client accounts.
             </p>
           </div>
-          <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+          <button onClick={() => setShowAddDialog(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
             <Plus className="h-4 w-4" />
             Add Client
           </button>
         </div>
+
+        {/* Add Client Dialog */}
+        {showAddDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+              <h2 className="mb-4 text-xl font-bold text-gray-900 dark:text-white">Add New Client</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Company Name *</label>
+                  <input value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} placeholder="e.g. Acme Corporation" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Website Domain *</label>
+                  <input value={newClient.domain} onChange={e => setNewClient({...newClient, domain: e.target.value})} placeholder="e.g. acmecorp.com" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Industry</label>
+                  <select value={newClient.industry} onChange={e => setNewClient({...newClient, industry: e.target.value})} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                    {industries.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Marketing Goals</label>
+                  <textarea value={newClient.marketing_goals} onChange={e => setNewClient({...newClient, marketing_goals: e.target.value})} rows={3} placeholder="e.g. Increase organic traffic by 50%" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+              </div>
+              {createError && (
+                <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{createError}</div>
+              )}
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => { setShowAddDialog(false); setCreateError(''); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>
+                <button onClick={handleCreateClient} disabled={creating || !newClient.name || !newClient.domain} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {creating ? 'Creating...' : 'Create Client'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Client Dialog */}
+        {showEditDialog && editingClient && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+              <h2 className="mb-4 text-xl font-bold text-gray-900 dark:text-white">Edit Client</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Company Name *</label>
+                  <input value={editData.name} onChange={e => setEditData({...editData, name: e.target.value})} placeholder="e.g. Acme Corporation" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Website Domain *</label>
+                  <input value={editData.domain} onChange={e => setEditData({...editData, domain: e.target.value})} placeholder="e.g. acmecorp.com" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Industry</label>
+                  <select value={editData.industry} onChange={e => setEditData({...editData, industry: e.target.value})} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                    {industries.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Marketing Goals</label>
+                  <textarea value={editData.marketing_goals} onChange={e => setEditData({...editData, marketing_goals: e.target.value})} rows={3} placeholder="e.g. Increase organic traffic by 50%" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+                </div>
+              </div>
+              {editError && (
+                <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-400">{editError}</div>
+              )}
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => { setShowEditDialog(false); setEditingClient(null); setEditError(''); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>
+                <button onClick={handleEditClient} disabled={saving || !editData.name || !editData.domain} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Search & Filter Bar */}
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -172,8 +384,20 @@ export default function Clients() {
           </div>
         )}
 
+        {/* Error State */}
+        {!loading && error && (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-16 shadow-sm dark:border-red-800 dark:bg-red-900/20">
+            <AlertTriangle className="mb-4 h-12 w-12 text-red-400" />
+            <h3 className="text-lg font-medium text-red-700 dark:text-red-300">Failed to load clients</h3>
+            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <button onClick={fetchClients} className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
+              Try Again
+            </button>
+          </div>
+        )}
+
         {/* Empty State */}
-        {!loading && clients.length === 0 && (
+        {!loading && !error && clients.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Users className="h-12 w-12 text-gray-300 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">No clients yet</h3>
@@ -184,99 +408,111 @@ export default function Clients() {
         )}
 
         {/* Client Cards Grid */}
-        {!loading && clients.length > 0 && (
+        {!loading && !error && clients.length > 0 && (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((client) => (
-              <div
-                key={client.id}
-                className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-gray-700 dark:bg-gray-800"
-              >
-                {/* Top Row: Avatar, Name, Status */}
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-600 text-sm font-bold text-white">
-                      {client.avatar || client.name?.substring(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900 dark:text-white">{client.name}</h3>
-                      <div className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
-                        <Globe className="h-3 w-3" />
-                        {client.domain}
+            {filtered.map((client) => {
+              const seoScore = client.seo_score || client.seoScore || 0
+              const keywordsTracked = client.keywords_tracked || client.keywordsTracked || 0
+              const activeCampaigns = client.active_campaigns || client.activeCampaigns || 0
+
+              return (
+                <div
+                  key={client.id}
+                  className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-gray-700 dark:bg-gray-800"
+                >
+                  {/* Top Row: Avatar, Name, Status */}
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-600 text-sm font-bold text-white">
+                        {client.avatar || client.name?.substring(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-gray-900 dark:text-white">{client.name}</h3>
+                        <div className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
+                          <Globe className="h-3 w-3" />
+                          {client.domain}
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <button className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
-                    <MoreVertical className="h-4 w-4" />
-                  </button>
-                </div>
 
-                {/* Badges */}
-                <div className="mt-4 flex items-center gap-2">
-                  {client.status && (
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${statusStyles(client.status)}`}>
-                      {client.status}
-                    </span>
-                  )}
-                  {client.industry && (
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${industryColor(client.industry)}`}>
-                      {client.industry}
-                    </span>
-                  )}
-                </div>
+                  {/* Badges */}
+                  <div className="mt-4 flex items-center gap-2">
+                    {client.status && (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${statusStyles(client.status)}`}>
+                        {client.status}
+                      </span>
+                    )}
+                    {client.industry && (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${industryColor(client.industry)}`}>
+                        {client.industry}
+                      </span>
+                    )}
+                  </div>
 
-                {/* Key Metrics */}
-                <div className="mt-5 grid grid-cols-3 divide-x divide-gray-100 dark:divide-gray-700">
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Target className="h-3.5 w-3.5 text-gray-400" />
+                  {/* Key Metrics */}
+                  <div className="mt-5 grid grid-cols-3 divide-x divide-gray-100 dark:divide-gray-700">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Target className="h-3.5 w-3.5 text-gray-400" />
+                      </div>
+                      <p className={`mt-1 text-lg font-bold ${scoreColor(seoScore)}`}>
+                        {seoScore}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">SEO Score</p>
                     </div>
-                    <p className={`mt-1 text-lg font-bold ${scoreColor(client.seoScore || 0)}`}>
-                      {client.seoScore || 0}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">SEO Score</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <TrendingUp className="h-3.5 w-3.5 text-gray-400" />
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <TrendingUp className="h-3.5 w-3.5 text-gray-400" />
+                      </div>
+                      <p className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
+                        {keywordsTracked}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Keywords</p>
                     </div>
-                    <p className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
-                      {client.keywordsTracked || 0}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Keywords</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Rocket className="h-3.5 w-3.5 text-gray-400" />
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Rocket className="h-3.5 w-3.5 text-gray-400" />
+                      </div>
+                      <p className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
+                        {activeCampaigns}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Campaigns</p>
                     </div>
-                    <p className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
-                      {client.activeCampaigns || 0}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Campaigns</p>
                   </div>
-                </div>
 
-                {/* Quick Actions */}
-                <div className="mt-5 flex items-center gap-2 border-t border-gray-100 pt-4 dark:border-gray-700">
-                  <button className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">
-                    <Eye className="h-3.5 w-3.5" />
-                    View
-                  </button>
-                  <button className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">
-                    <Pencil className="h-3.5 w-3.5" />
-                    Edit
-                  </button>
-                  <button className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30">
-                    <ScanSearch className="h-3.5 w-3.5" />
-                    Audit
-                  </button>
+                  {/* Quick Actions */}
+                  <div className="mt-5 flex items-center gap-2 border-t border-gray-100 pt-4 dark:border-gray-700">
+                    <button
+                      onClick={() => window.location.href = '/clients/' + client.id}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      View
+                    </button>
+                    <button
+                      onClick={() => openEditDialog(client)}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleAudit(client.id)}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                    >
+                      <ScanSearch className="h-3.5 w-3.5" />
+                      Audit
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
         {/* No results from filter */}
-        {!loading && clients.length > 0 && filtered.length === 0 && (
+        {!loading && !error && clients.length > 0 && filtered.length === 0 && (
           <div className="mt-12 text-center">
             <Search className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
             <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">

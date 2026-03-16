@@ -67,10 +67,14 @@ async def get_competitor_analysis(
         db, competitor_id=competitor_id
     )
     if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Competitor analysis not found",
-        )
+        return {
+            "competitor_id": competitor_id,
+            "domain_authority": 0,
+            "organic_traffic": 0,
+            "organic_keywords": 0,
+            "backlinks_count": 0,
+            "message": "No analysis data yet. Trigger a competitor analysis first.",
+        }
     if hasattr(analysis, '__table__'):
         return model_to_dict(analysis)
     return analysis

@@ -182,7 +182,7 @@ async def publish_post(
         db,
         post_id=post_id,
         status="published",
-        published_at=datetime.now(timezone.utc).isoformat(),
+        published_at=datetime.now(timezone.utc),
     )
     if not post:
         raise HTTPException(

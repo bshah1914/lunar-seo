@@ -140,7 +140,7 @@ async def analyze(
 
 @router.post("/recommend")
 async def get_recommendations(
-    client_id: str,
+    client_id: Optional[str] = None,
     focus_area: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
