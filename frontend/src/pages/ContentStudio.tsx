@@ -253,7 +253,7 @@ export default function ContentStudio() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <PageHeader title="Content Studio" subtitle="Create, optimize, and manage all your marketing content with AI.">
+      <PageHeader title="Content Studio" description="Create, optimize, and manage all your marketing content with AI.">
         <div className="flex gap-2">
           {clients.length > 0 && (
             <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
@@ -282,10 +282,10 @@ export default function ContentStudio() {
       {!loading && content.length > 0 && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatsCard title="Total Content" value={totalContent} icon={FileText} />
-            <StatsCard title="Published" value={published} icon={Send} />
-            <StatsCard title="Drafts" value={drafts} icon={PenTool} />
-            <StatsCard title="Avg SEO Score" value={avgSeo} icon={Sparkles} />
+            <StatsCard title="Total Content" value={totalContent} icon={<FileText className="h-5 w-5" />} />
+            <StatsCard title="Published" value={published} icon={<Send className="h-5 w-5" />} />
+            <StatsCard title="Drafts" value={drafts} icon={<PenTool className="h-5 w-5" />} />
+            <StatsCard title="Avg SEO Score" value={avgSeo} icon={<Sparkles className="h-5 w-5" />} />
           </div>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

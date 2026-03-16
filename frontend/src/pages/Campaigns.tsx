@@ -121,10 +121,10 @@ export default function Campaigns() {
       {!loading && campaignsData.length > 0 && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatsCard title="Active Campaigns" value={String(activeCampaigns)} icon={Rocket} />
-            <StatsCard title="Completed" value={String(completedCampaigns)} icon={CheckCircle2} />
-            <StatsCard title="Total Budget" value={`$${totalBudget.toLocaleString()}`} icon={DollarSign} />
-            <StatsCard title="Total Spent" value={`$${totalSpent.toLocaleString()}`} icon={TrendingUp} />
+            <StatsCard title="Active Campaigns" value={String(activeCampaigns)} icon={<Rocket className="h-5 w-5" />} />
+            <StatsCard title="Completed" value={String(completedCampaigns)} icon={<CheckCircle2 className="h-5 w-5" />} />
+            <StatsCard title="Total Budget" value={`$${totalBudget.toLocaleString()}`} icon={<DollarSign className="h-5 w-5" />} />
+            <StatsCard title="Total Spent" value={`$${totalSpent.toLocaleString()}`} icon={<TrendingUp className="h-5 w-5" />} />
           </div>
 
           <div className="space-y-4">

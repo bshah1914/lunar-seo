@@ -37,7 +37,7 @@ async def connect_ad_account(
         db,
         client_id=client_id,
         platform=platform,
-        account_id_external=account_id_external,
+        account_id=account_id_external,
     )
     return model_to_dict(account)
 
@@ -51,15 +51,15 @@ async def list_ad_campaigns(
     db: AsyncSession = Depends(get_db),
 ):
     """List ad campaigns."""
-    campaigns, total = await crud.list_ad_campaigns(
+    campaigns = await crud.list_ad_campaigns(
         db,
         client_id=client_id,
         platform=platform,
-        campaign_status=campaign_status,
+        status=campaign_status,
     )
     return {
         "campaigns": [model_to_dict(c) for c in campaigns],
-        "total": total,
+        "total": len(campaigns),
     }
 
 
@@ -81,8 +81,7 @@ async def create_ad_campaign(
         client_id=client_id,
         name=name,
         platform=platform,
-        budget_daily=budget_daily,
-        budget_total=budget_total,
+        budget_amount=budget_total,
         start_date=start_date,
         end_date=end_date,
     )
@@ -97,7 +96,7 @@ async def get_ad_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     """Get ad campaign details."""
-    campaigns, _ = await crud.list_ad_campaigns(db, client_id=client_id)
+    campaigns = await crud.list_ad_campaigns(db, client_id=client_id)
     campaign = None
     for c in campaigns:
         c_data = model_to_dict(c)
@@ -121,7 +120,7 @@ async def update_ad_campaign(
 ):
     """Update an ad campaign."""
     # Find and update the campaign
-    campaigns, _ = await crud.list_ad_campaigns(db, client_id=client_id)
+    campaigns = await crud.list_ad_campaigns(db, client_id=client_id)
     campaign = None
     for c in campaigns:
         c_data = model_to_dict(c)
@@ -146,13 +145,14 @@ async def get_ad_analytics(
     db: AsyncSession = Depends(get_db),
 ):
     """Get advertising analytics."""
-    metrics = await crud.get_ad_metrics(
-        db,
-        client_id=client_id,
-        platform=platform,
-        date_from=date_from,
-        date_to=date_to,
-    )
+    # Get all campaigns for this client, then aggregate metrics
+    campaigns = await crud.list_ad_campaigns(db, client_id=client_id, platform=platform)
+    all_metrics = []
+    for c in campaigns:
+        c_data = model_to_dict(c)
+        m = await crud.get_ad_metrics(db, ad_campaign_id=c_data["id"])
+        all_metrics.extend(m)
+    metrics = all_metrics
     if not metrics:
         return {
             "total_spend": 0,

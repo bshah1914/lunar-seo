@@ -118,7 +118,7 @@ const Reports: React.FC = () => {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Reports"
-        action={
+        actions={
           <div className="flex gap-2">
             {clients.length > 0 && (
               <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}

@@ -199,7 +199,7 @@ export default function ImageStudio() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <PageHeader title="AI Creative Studio" subtitle="Generate stunning marketing visuals with AI in seconds.">
+      <PageHeader title="AI Creative Studio" description="Generate stunning marketing visuals with AI in seconds.">
         <div className="flex gap-2">
           {clients.length > 0 && (
             <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
